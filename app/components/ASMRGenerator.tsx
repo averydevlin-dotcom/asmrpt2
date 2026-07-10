@@ -33,7 +33,7 @@ interface Slot {
 
 export default function ASMRGenerator() {
   const [slots, setSlots] = useState<Slot[]>(
-    Array.from({ length: 6 }, (_, i) => ({
+    Array.from({ length: 1 }, (_, i) => ({
       id: i,
       prompt: '',
       volume: 70,
