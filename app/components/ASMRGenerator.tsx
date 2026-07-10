@@ -150,7 +150,7 @@ export default function ASMRGenerator() {
         <p className="text-sm text-white/40">Describe a sound — AI generates and loops it</p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 w-full max-w-3xl">
+      <div className="flex flex-col items-center w-full max-w-sm">
         {slots.map(slot => (
           <SlotCard
             key={slot.id}
