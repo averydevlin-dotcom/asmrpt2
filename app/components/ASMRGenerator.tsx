@@ -562,7 +562,7 @@ function IdleView({ onSubmit }: { onSubmit: (text: string, duration: number | nu
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(input, duration) }}}
-          placeholder="e.g. old man whittling in a rocking chair by a fire"
+          placeholder="e.g. fireplace crackling with rain outside"
           rows={3}
           className="w-full bg-transparent text-sm text-white/80 placeholder-white/15 resize-none outline-none leading-relaxed"
         />
