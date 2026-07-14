@@ -626,6 +626,21 @@ export default function ASMRGenerator() {
 
   useEffect(() => () => stopAll(), []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // iOS Safari requires AudioContext to be created/resumed synchronously
+  // within a user gesture. Unlock on first touch so async handleGenerate works.
+  useEffect(() => {
+    const unlock = () => {
+      if (!ctxRef.current) ctxRef.current = new AudioContext()
+      ctxRef.current.resume()
+    }
+    document.addEventListener('touchstart', unlock, { once: true })
+    document.addEventListener('touchend', unlock, { once: true })
+    return () => {
+      document.removeEventListener('touchstart', unlock)
+      document.removeEventListener('touchend', unlock)
+    }
+  }, [])
+
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-white flex flex-col items-center px-6 py-12">
       <div className="text-center mb-10">
