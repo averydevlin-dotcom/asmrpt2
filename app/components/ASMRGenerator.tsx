@@ -369,10 +369,12 @@ function extractSceneComponents(raw: string): SoundComponent[] {
 function validateAudio(buffer: AudioBuffer): { valid: boolean; reason?: string } {
   const data = buffer.getChannelData(0)
   const rmsVal = Math.sqrt(data.reduce((s, x) => s + x * x, 0) / data.length)
-  if (rmsVal < 0.0008) return { valid: false, reason: 'nearly silent' }
+  if (rmsVal < 0.0005) return { valid: false, reason: 'nearly silent' }
+  // ASMR sounds are inherently sparse — gaps between raindrops, fire crackles etc.
+  // Only count truly silent samples (< 0.001) and allow up to 90%.
   let silent = 0
-  for (let i = 0; i < data.length; i++) if (Math.abs(data[i]) < 0.004) silent++
-  if (silent / data.length > 0.65) return { valid: false, reason: 'too much silence' }
+  for (let i = 0; i < data.length; i++) if (Math.abs(data[i]) < 0.001) silent++
+  if (silent / data.length > 0.90) return { valid: false, reason: 'too much silence' }
   return { valid: true }
 }
 
