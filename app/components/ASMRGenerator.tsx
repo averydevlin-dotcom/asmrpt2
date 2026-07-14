@@ -15,6 +15,7 @@ interface SoundComponent {
   volume: number
   audioBuffer?: AudioBuffer
   warning?: string
+  retries?: number
 }
 
 interface FilterSettings {
@@ -30,134 +31,273 @@ interface AppState {
   phase: AppPhase
   components: SoundComponent[]
   filters: FilterSettings
-  duration: number | null   // seconds; null = loop forever
+  duration: number | null
 }
 
-// ─── ASMR KNOWLEDGE BASE ─────────────────────────────────────────────
+// ─── NEGATIVE CONSTRAINTS ────────────────────────────────────────────
 
-interface ASMREntry {
-  keywords: string[]
+const BASE_NEG = 'no music, no singing, no voice, no speech, no percussion, no sudden loud sounds, no reverb tail, no distortion, isolated ambient texture only'
+
+function negFor(type: string): string {
+  const extras: Record<string, string> = {
+    fire:      'no explosions, no crackling pops',
+    rain:      'no thunder, no wind howl',
+    breathing: 'no words, no humming',
+    water:     'no rushing rapids, no splashing',
+    tapping:   'no drumming, no rhythmic music',
+  }
+  return extras[type] ? `${BASE_NEG}, ${extras[type]}` : BASE_NEG
+}
+
+// ─── SCENE ELEMENT DATABASE ──────────────────────────────────────────
+
+interface SceneElement {
+  patterns: RegExp[]
   label: string
-  promptFn: (material: string) => string
+  promptFn: () => string
+  negType: string
 }
 
-const ASMR_DB: ASMREntry[] = [
-  { keywords: ['tap','tapping','knock','click'],
-    label: 'Tapping',
-    promptFn: m => `gentle slow tapping ${m}, natural organic sound, soft calming ASMR, quiet and soothing` },
-  { keywords: ['crinkle','crinkling','rustle','rustling','scrunch','wrap'],
-    label: 'Crinkling',
-    promptFn: m => `soft ${m || 'paper'} crinkling naturally, calming ASMR texture, gentle soothing sound` },
-  { keywords: ['brush','brushing','stroke','sweep'],
-    label: 'Brushing',
-    promptFn: m => `slow gentle brushing ${m}, natural calming ASMR strokes, soft organic texture` },
-  { keywords: ['scratch','scratching','scrape'],
-    label: 'Scratching',
-    promptFn: m => `light gentle scratching ${m}, natural soft ASMR, calming and quiet` },
-  { keywords: ['whisper','whispering'],
-    label: 'Soft breathing',
-    promptFn: () => `soft natural breathing and gentle exhaling, calming ASMR, soothing and peaceful` },
-  { keywords: ['breath','breathing','exhale','inhale','blow','blowing'],
-    label: 'Soft breathing',
-    promptFn: () => `soft slow natural breathing, gentle exhaling, calming ASMR, very quiet and peaceful` },
-  { keywords: ['rain','rainfall','drizzle','raindrop'],
-    label: 'Rain',
-    promptFn: m => `gentle natural rainfall ${m}, soft soothing rain ASMR, peaceful and calming` },
-  { keywords: ['fire','fireplace','crackling','crackle','campfire'],
-    label: 'Crackling fire',
-    promptFn: m => `cozy natural fireplace crackling ${m}, warm soothing ASMR, gentle and calming` },
-  { keywords: ['water','stream','creek','brook','flowing','drip','dripping'],
-    label: 'Flowing water',
-    promptFn: m => `gentle natural water flowing ${m}, soft calming stream sounds, peaceful ASMR` },
-  { keywords: ['ocean','waves','beach','sea'],
-    label: 'Ocean waves',
-    promptFn: () => `soft natural ocean waves rolling gently, calming beach ASMR, peaceful and soothing` },
-  { keywords: ['type','typing','keyboard'],
-    label: 'Keyboard typing',
-    promptFn: m => `slow gentle keyboard typing ${m}, soft natural key sounds, calming quiet ASMR` },
-  { keywords: ['paper','page','pages','book','turning'],
-    label: 'Paper',
-    promptFn: () => `soft natural paper sounds, gentle page turning, calming ASMR, quiet and peaceful` },
-  { keywords: ['write','writing','pen','pencil','marker','drawing'],
+const SCENE_ELEMENTS: SceneElement[] = [
+  {
+    patterns: [/\bwhittl\w*/i, /\bcarv\w+\b/i, /\bchisell?\w*/i, /\bwoodwork\w*/i],
+    label: 'Wood carving',
+    promptFn: () => 'slow rhythmic wood carving and knife scraping sounds, gentle whittling texture, natural organic ASMR, soft and calming',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\bknit\w*/i, /\bsew\w*/i, /\bcrochet\w*/i, /\bweav\w*/i],
+    label: 'Knitting',
+    promptFn: () => 'soft gentle knitting sounds, quiet rhythmic needle clicks, natural calming ASMR texture',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\bstir\w*/i, /\bcook\w*/i, /\bbak\w*/i],
+    label: 'Soft stirring',
+    promptFn: () => 'gentle soft stirring and mixing sounds, ceramic bowl, natural calming ASMR, quiet kitchen texture',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\bhair\s*brush\w*/i, /\bbrush\w+\s+hair/i, /\bcomb\w+\b/i],
+    label: 'Hair brushing',
+    promptFn: () => 'soft gentle hair brushing sounds, slow natural strokes, calming ASMR, quiet and soothing',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\bwrit\w+/i, /\bjournal\w*/i, /\bsketch\w*/i, /\bdraw\w+/i],
     label: 'Writing',
-    promptFn: m => `pencil writing naturally on paper ${m}, soft calming ASMR scratching sound` },
-  { keywords: ['wind','breeze'],
-    label: 'Soft wind',
-    promptFn: m => `gentle natural wind ${m}, soft calming breeze ASMR, soothing and peaceful` },
-  { keywords: ['leaves','leaf','foliage'],
+    promptFn: () => 'pencil and pen writing on paper, soft natural scratching, gentle calming ASMR close-up',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\btyp\w+/i, /\bkeyboard\b/i],
+    label: 'Keyboard typing',
+    promptFn: () => 'slow gentle keyboard typing, soft natural key clicks, quiet calming ASMR',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\bread\w*\s+book/i, /\bflip\w+\s+page/i, /\bpage\s+turn\w*/i, /\bleaf\w+\s+through/i],
+    label: 'Page turning',
+    promptFn: () => 'soft natural paper page turning, gentle book sounds, calming ASMR, quiet',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\brocking\s+chair\b/i, /\brock\w*\s+in\s+(a\s+)?chair/i],
+    label: 'Rocking chair',
+    promptFn: () => 'gentle rhythmic rocking chair creaking on wood floor, slow natural wood creak, calming ASMR',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\bclock\b/i, /\btick\w+\b/i],
+    label: 'Clock ticking',
+    promptFn: () => 'slow quiet clock ticking, soft rhythmic tick-tock, natural calming ASMR',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\bwind\s+chime\w*/i, /\bchime\w*/i],
+    label: 'Wind chimes',
+    promptFn: () => 'soft gentle wind chimes, delicate natural glass tones, calming ASMR, soothing',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\bcandle\w*/i, /\bflicker\w*/i],
+    label: 'Candle flame',
+    promptFn: () => 'soft small candle flame flickering, gentle quiet fire, natural calming ASMR',
+    negType: 'fire',
+  },
+  {
+    patterns: [/\bfire(place|side)?\b/i, /\bcrackl\w*/i, /\bhearth\b/i, /\bcampfire\b/i],
+    label: 'Crackling fire',
+    promptFn: () => 'cozy natural fireplace crackling, warm gentle fire sounds, calming ASMR, soft and soothing',
+    negType: 'fire',
+  },
+  {
+    patterns: [/\brain\b/i, /\brainfall\b/i, /\bdrizzl\w*/i, /\braindrop\w*/i],
+    label: 'Rain',
+    promptFn: () => 'gentle natural rainfall, soft soothing rain drops, peaceful calming ASMR',
+    negType: 'rain',
+  },
+  {
+    patterns: [/\bocean\b/i, /\bwaves?\b/i, /\bbeach\b/i, /\bseaside\b/i],
+    label: 'Ocean waves',
+    promptFn: () => 'soft natural ocean waves rolling gently, calming beach ASMR, peaceful and soothing',
+    negType: 'water',
+  },
+  {
+    patterns: [/\bstream\b/i, /\bcreek\b/i, /\brook\b/i, /\briver\b/i, /\bflow\w+\s+water/i],
+    label: 'Flowing water',
+    promptFn: () => 'gentle natural stream flowing, soft calming water sounds, peaceful ASMR',
+    negType: 'water',
+  },
+  {
+    patterns: [/\bforest\b/i, /\bwoods\b/i, /\bleaves?\s+rustle/i, /\bfoliage\b/i],
     label: 'Rustling leaves',
-    promptFn: m => `leaves rustling gently ${m}, soft natural calming ASMR, peaceful nature sound` },
-  { keywords: ['glass','crystal','bowl'],
-    label: 'Glass',
-    promptFn: () => `gentle glass tapping, natural crystal resonance, soft soothing ASMR` },
-  { keywords: ['sand','gravel','pebble'],
-    label: 'Sand',
-    promptFn: () => `soft sand moving gently, natural calming granular ASMR texture, soothing` },
-  { keywords: ['purr','purring','cat'],
+    promptFn: () => 'leaves rustling gently in breeze, soft natural forest ASMR, calming and peaceful',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\bwind\b/i, /\bbreeze\b/i],
+    label: 'Soft wind',
+    promptFn: () => 'gentle soft natural wind, light calming breeze ASMR, soothing and peaceful',
+    negType: 'rain',
+  },
+  {
+    patterns: [/\bsnow\b/i, /\bwinter\b/i],
+    label: 'Snow ambience',
+    promptFn: () => 'soft snow falling, quiet winter ambience, gentle calming ASMR, peaceful',
+    negType: 'rain',
+  },
+  {
+    patterns: [/\bcafe\b/i, /\bcoffee\s+shop\b/i],
+    label: 'Café ambience',
+    promptFn: () => 'soft distant café ambience, gentle background murmur, calming coffee shop ASMR texture',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\bwhisper\w*/i, /\bmurmur\w*/i],
+    label: 'Soft breathing',
+    promptFn: () => 'soft natural breathing and gentle exhaling, calming ASMR, quiet and peaceful',
+    negType: 'breathing',
+  },
+  {
+    patterns: [/\bsleep\w*/i, /\bsnooz\w*/i, /\bnap\b/i],
+    label: 'Soft breathing',
+    promptFn: () => 'soft slow natural breathing, gentle sleeping sounds, very quiet calming ASMR',
+    negType: 'breathing',
+  },
+  {
+    patterns: [/\bcat\b/i, /\bkitten\b/i, /\bfeline\b/i],
     label: 'Purring',
-    promptFn: () => `cat purring softly and naturally, deep gentle calming vibration, soothing ASMR` },
+    promptFn: () => 'cat purring softly and naturally, deep gentle calming vibration, soothing ASMR',
+    negType: 'breathing',
+  },
+  {
+    patterns: [/\btap\w*/i, /\bknock\w*/i, /\bclick\w*/i],
+    label: 'Tapping',
+    promptFn: () => 'gentle slow tapping sounds, natural organic texture, soft calming ASMR, quiet and soothing',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\bcrinkl\w*/i, /\brustle\w*/i, /\bwrap\w*/i],
+    label: 'Crinkling',
+    promptFn: () => 'soft paper crinkling naturally, gentle calming ASMR texture, quiet and soothing',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\bscratch\w*/i, /\bscrap\w*/i],
+    label: 'Scratching',
+    promptFn: () => 'light gentle scratching sounds, natural soft ASMR, calming and quiet',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\bbrush\w*/i, /\bstroke\w*/i],
+    label: 'Brushing',
+    promptFn: () => 'slow gentle brushing sounds, natural calming ASMR strokes, soft organic texture',
+    negType: 'tapping',
+  },
+  {
+    patterns: [/\bsand\b/i, /\bgravel\b/i],
+    label: 'Sand',
+    promptFn: () => 'soft sand moving gently, natural calming granular ASMR texture, soothing',
+    negType: 'tapping',
+  },
 ]
 
-const NON_ASMR: { keywords: string[]; warning: string; fallback: string }[] = [
-  { keywords: ['music','song','singing','melody','beat','rhythm','guitar','piano','drums','bass'],
-    warning: "Music can't be generated as an ASMR sound effect.",
-    fallback: 'soft paper crinkling' },
-  { keywords: ['explosion','bang','crash','loud','heavy','intense','boom'],
-    warning: 'ASMR works best with soft, quiet sounds.',
-    fallback: 'gentle rain on a window' },
-  { keywords: ['talking','speaking','speech','conversation','dialogue'],
-    warning: 'Spoken voice isn\'t supported. Using soft breathing instead.',
-    fallback: 'soft breathing' },
+const NON_ASMR: { patterns: RegExp[]; warning: string; fallbackIdx: number }[] = [
+  { patterns: [/\bmusic\b/i, /\bsong\b/i, /\bsinging\b/i, /\bmelody\b/i, /\bdrums?\b/i],
+    warning: "Music can't be generated as sound effects.", fallbackIdx: 11 },
+  { patterns: [/\bexplosion\b/i, /\bbang\b/i, /\bcrash\b/i, /\bboom\b/i],
+    warning: 'ASMR needs soft, quiet sounds.', fallbackIdx: 12 },
+  { patterns: [/\btalking\b/i, /\bspeaking\b/i, /\bconversation\b/i],
+    warning: "Spoken voice isn't supported. Using breathing instead.", fallbackIdx: 19 },
 ]
 
-const MATERIALS = ['wood','wooden','glass','metal','plastic','paper','leather','fabric',
-                   'stone','ceramic','velvet','silk','cotton','nylon','cardboard']
+// ─── SCENE EXTRACTION ────────────────────────────────────────────────
 
-function extractMaterial(text: string): string {
-  const lower = text.toLowerCase()
-  const found = MATERIALS.find(m => lower.includes(m))
-  return found ? `on ${found}` : ''
+function extractSceneComponents(raw: string): SoundComponent[] {
+  const found: SoundComponent[] = []
+  const usedLabels = new Set<string>()
+
+  for (const el of SCENE_ELEMENTS) {
+    if (found.length >= 4) break
+    if (el.patterns.some(p => p.test(raw)) && !usedLabels.has(el.label)) {
+      usedLabels.add(el.label)
+      found.push({
+        id: Math.random().toString(36).slice(2, 8),
+        originalText: el.label,
+        enhancedPrompt: `${el.promptFn()}, ${negFor(el.negType)}`,
+        displayLabel: el.label,
+        status: 'pending', volume: 70,
+      })
+    }
+  }
+
+  for (const bad of NON_ASMR) {
+    if (bad.patterns.some(p => p.test(raw))) {
+      const fallback = SCENE_ELEMENTS[bad.fallbackIdx]
+      if (!usedLabels.has(fallback.label)) {
+        usedLabels.add(fallback.label)
+        found.push({
+          id: Math.random().toString(36).slice(2, 8),
+          originalText: raw.trim(),
+          enhancedPrompt: `${fallback.promptFn()}, ${negFor(fallback.negType)}`,
+          displayLabel: fallback.label,
+          status: 'pending', volume: 70,
+          warning: bad.warning + ` Generating "${fallback.label}" instead.`,
+        })
+      }
+    }
+  }
+
+  if (found.length === 0) {
+    found.push({
+      id: Math.random().toString(36).slice(2, 8),
+      originalText: raw.trim(),
+      enhancedPrompt: `${raw.trim()}, natural organic texture, soft calming ASMR, gentle and soothing, ${BASE_NEG}`,
+      displayLabel: raw.trim(),
+      status: 'pending', volume: 70,
+    })
+  }
+
+  return found
 }
 
-function analyzePrompt(raw: string): SoundComponent[] {
-  const parts = raw
-    .split(/\band\b|\bwith\b|\bwhile\b|\bplus\b|\balso\b|,|&|\+/i)
-    .map(s => s.trim()).filter(Boolean)
+// ─── AUDIO VALIDATION ────────────────────────────────────────────────
 
-  return parts.map(part => {
-    const lower = part.toLowerCase()
-    const id = Math.random().toString(36).slice(2, 8)
-    const material = extractMaterial(part)
+function validateAudio(buffer: AudioBuffer): { valid: boolean; reason?: string } {
+  const data = buffer.getChannelData(0)
+  const rmsVal = Math.sqrt(data.reduce((s, x) => s + x * x, 0) / data.length)
+  if (rmsVal < 0.0008) return { valid: false, reason: 'nearly silent' }
+  let silent = 0
+  for (let i = 0; i < data.length; i++) if (Math.abs(data[i]) < 0.004) silent++
+  if (silent / data.length > 0.65) return { valid: false, reason: 'too much silence' }
+  return { valid: true }
+}
 
-    const nonAsmr = NON_ASMR.find(n => n.keywords.some(kw => lower.includes(kw)))
-    if (nonAsmr) {
-      const fallbackEntry = ASMR_DB.find(e => e.keywords.some(kw => nonAsmr.fallback.includes(kw))) ?? ASMR_DB[0]
-      return {
-        id, originalText: part,
-        enhancedPrompt: fallbackEntry.promptFn(''),
-        displayLabel: fallbackEntry.label,
-        status: 'pending' as ComponentStatus, volume: 70,
-        warning: nonAsmr.warning + ` Generating "${fallbackEntry.label}" instead.`,
-      }
-    }
-
-    const entry = ASMR_DB.find(e => e.keywords.some(kw => lower.includes(kw)))
-    if (entry) {
-      return {
-        id, originalText: part,
-        enhancedPrompt: entry.promptFn(material),
-        displayLabel: entry.label + (material ? ` (${material.replace('on ', '')})` : ''),
-        status: 'pending' as ComponentStatus, volume: 70,
-      }
-    }
-
-    return {
-      id, originalText: part,
-      enhancedPrompt: `${part.trim()}, natural organic sound, soft calming ASMR, gentle and soothing`,
-      displayLabel: part.trim(),
-      status: 'pending' as ComponentStatus, volume: 70,
-    }
-  })
+function retryPrompt(original: string, attempt: number): string {
+  if (attempt === 1) return original + ', sustained continuous ambient texture'
+  const core = original.split(',')[0]
+  return `${core}, pure ambient sound texture, loopable, ${BASE_NEG}`
 }
 
 // ─── AUDIO UTILITIES ─────────────────────────────────────────────────
@@ -187,13 +327,9 @@ function rms(buf: AudioBuffer): number {
 }
 
 interface FilterNodes {
-  warmth: BiquadFilterNode
-  presence: BiquadFilterNode
-  air: BiquadFilterNode
-  smooth: BiquadFilterNode
-  master: GainNode
+  warmth: BiquadFilterNode; presence: BiquadFilterNode
+  air: BiquadFilterNode; smooth: BiquadFilterNode; master: GainNode
 }
-
 interface CompNodes { normalGain: GainNode; userGain: GainNode; source: AudioBufferSourceNode }
 
 const DEFAULT_FILTERS: FilterSettings = { presence: 0, air: 0, warmth: 0, smooth: 100 }
@@ -226,7 +362,7 @@ export default function ASMRGenerator() {
   const filterRef = useRef<FilterNodes | null>(null)
   const compNodesRef = useRef<Map<string, CompNodes>>(new Map())
 
-  function ctx(): AudioContext {
+  function getCtx(): AudioContext {
     if (!ctxRef.current || ctxRef.current.state === 'closed')
       ctxRef.current = new AudioContext()
     return ctxRef.current
@@ -247,14 +383,14 @@ export default function ASMRGenerator() {
     return { warmth, presence, air, smooth, master }
   }
 
-  function filters(): FilterNodes {
-    const audioCtx = ctx()
+  function getFilters(): FilterNodes {
+    const audioCtx = getCtx()
     if (!filterRef.current) filterRef.current = buildFilters(audioCtx)
     return filterRef.current
   }
 
   function playComp(id: string, buf: AudioBuffer, volume: number) {
-    const audioCtx = ctx(); const f = filters()
+    const audioCtx = getCtx(); const f = getFilters()
     stopComp(id)
     const loopBuf = makeCrossfadeLoop(audioCtx, buf)
     const r = rms(loopBuf)
@@ -284,54 +420,63 @@ export default function ASMRGenerator() {
 
   function handleSubmit(raw: string, duration: number | null) {
     if (!raw.trim()) return
-    setState(prev => ({ ...prev, phase: 'confirming', components: analyzePrompt(raw), duration }))
+    setState(prev => ({ ...prev, phase: 'confirming', components: extractSceneComponents(raw), duration }))
   }
 
   async function handleGenerate(components: SoundComponent[], duration: number | null) {
     stopAll()
     setState(prev => ({
       ...prev, phase: 'generating', duration,
-      components: components.map(c => ({ ...c, status: 'generating' })),
+      components: components.map(c => ({ ...c, status: 'generating', retries: 0 })),
     }))
-    const audioCtx = ctx(); await audioCtx.resume()
+
+    const audioCtx = getCtx(); await audioCtx.resume()
 
     await Promise.all(components.map(async comp => {
-      try {
-        const res = await fetch('/api/generate', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: comp.enhancedPrompt }),
-        })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const arr = await res.arrayBuffer()
-        const buf = await audioCtx.decodeAudioData(arr)
-        setState(prev => {
-          const updated = prev.components.map(c =>
-            c.id === comp.id ? { ...c, status: 'ready' as ComponentStatus, audioBuffer: buf } : c
-          )
-          const readyComp = updated.find(c => c.id === comp.id)
-          if (readyComp?.audioBuffer) playComp(comp.id, readyComp.audioBuffer, readyComp.volume)
-          const allDone = updated.every(c => c.status === 'ready' || c.status === 'failed')
-          return { ...prev, components: updated, phase: allDone ? 'ready' : 'generating' }
-        })
-      } catch {
-        setState(prev => {
+      let buf: AudioBuffer | null = null
+      let attempts = 0
+
+      while (attempts < 3 && !buf) {
+        try {
+          const prompt = attempts === 0 ? comp.enhancedPrompt : retryPrompt(comp.enhancedPrompt, attempts)
+          if (attempts > 0) {
+            setState(prev => ({
+              ...prev,
+              components: prev.components.map(c => c.id === comp.id ? { ...c, retries: attempts } : c),
+            }))
+          }
+          const res = await fetch('/api/generate', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: prompt }),
+          })
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const decoded = await audioCtx.decodeAudioData(await res.arrayBuffer())
+          if (validateAudio(decoded).valid || attempts === 2) buf = decoded
+          else attempts++
+        } catch { attempts++; if (attempts >= 3) break }
+      }
+
+      setState(prev => {
+        if (!buf) {
           const updated = prev.components.map(c =>
             c.id === comp.id ? { ...c, status: 'failed' as ComponentStatus } : c
           )
-          const allDone = updated.every(c => c.status === 'ready' || c.status === 'failed')
-          return { ...prev, components: updated, phase: allDone ? 'ready' : 'generating' }
-        })
-      }
+          return { ...prev, components: updated, phase: updated.every(c => c.status !== 'generating') ? 'ready' : 'generating' }
+        }
+        const updated = prev.components.map(c =>
+          c.id === comp.id ? { ...c, status: 'ready' as ComponentStatus, audioBuffer: buf!, retries: 0 } : c
+        )
+        const readyComp = updated.find(c => c.id === comp.id)
+        if (readyComp?.audioBuffer) playComp(comp.id, readyComp.audioBuffer, readyComp.volume)
+        return { ...prev, components: updated, phase: updated.every(c => c.status !== 'generating') ? 'ready' : 'generating' }
+      })
     }))
   }
 
   function handleVolume(id: string, vol: number) {
-    setState(prev => ({
-      ...prev, components: prev.components.map(c => c.id === id ? { ...c, volume: vol } : c),
-    }))
+    setState(prev => ({ ...prev, components: prev.components.map(c => c.id === id ? { ...c, volume: vol } : c) }))
     const n = compNodesRef.current.get(id)
-    if (n && ctxRef.current)
-      n.userGain.gain.setTargetAtTime(vol / 100, ctxRef.current.currentTime, 0.04)
+    if (n && ctxRef.current) n.userGain.gain.setTargetAtTime(vol / 100, ctxRef.current.currentTime, 0.04)
   }
 
   function handleFilter(key: keyof FilterSettings, val: number) {
@@ -351,19 +496,14 @@ export default function ASMRGenerator() {
       const t = audioCtx.currentTime
       f.master.gain.setValueAtTime(f.master.gain.value, t)
       f.master.gain.linearRampToValueAtTime(0, t + 3)
-      setTimeout(() => {
-        stopAll()
-        setState({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null })
-      }, 3500)
+      setTimeout(() => { stopAll(); setState({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null }) }, 3500)
     } else {
-      stopAll()
-      setState({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null })
+      stopAll(); setState({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null })
     }
   }
 
   function handleReset() {
-    stopAll()
-    setState({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null })
+    stopAll(); setState({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null })
   }
 
   useEffect(() => () => stopAll(), []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -373,36 +513,28 @@ export default function ASMRGenerator() {
       <div className="text-center mb-10">
         <p className="text-xs tracking-[0.3em] text-white/30 uppercase mb-2">Hatch · Prototype</p>
         <h1 className="text-3xl font-light tracking-wide mb-1">ASMR Generator</h1>
-        <p className="text-sm text-white/40">Describe a sound — AI generates and loops it</p>
+        <p className="text-sm text-white/40">Describe a scene — AI layers the sounds</p>
       </div>
 
       <div className="w-full max-w-lg">
-        {state.phase === 'idle' && (
-          <IdleView onSubmit={handleSubmit} />
-        )}
+        {state.phase === 'idle' && <IdleView onSubmit={handleSubmit} />}
         {state.phase === 'confirming' && (
           <ConfirmView
-            components={state.components}
-            duration={state.duration}
+            components={state.components} duration={state.duration}
             onConfirm={() => handleGenerate(state.components, state.duration)}
             onEdit={handleReset}
           />
         )}
         {(state.phase === 'generating' || state.phase === 'ready') && (
           <ActiveView
-            components={state.components}
-            filters={state.filters}
-            duration={state.duration}
-            onVolume={handleVolume}
-            onFilter={handleFilter}
-            onExpire={handleExpire}
-            onReset={handleReset}
+            components={state.components} filters={state.filters} duration={state.duration}
+            onVolume={handleVolume} onFilter={handleFilter} onExpire={handleExpire} onReset={handleReset}
           />
         )}
       </div>
 
       <p className="mt-12 text-[10px] text-white/10 tracking-wide">
-        v0.3 · AI generated · powered by ElevenLabs
+        v0.4 · AI generated · powered by ElevenLabs
       </p>
     </div>
   )
@@ -414,48 +546,55 @@ function IdleView({ onSubmit }: { onSubmit: (text: string, duration: number | nu
   const [input, setInput] = useState('')
   const [duration, setDuration] = useState<number | null>(null)
 
+  const examples = [
+    'rain on a window',
+    'old man whittling by a fireplace',
+    'forest stream with rustling leaves',
+    'cat sleeping by a candle',
+    'crackling fire with soft wind',
+  ]
+
   return (
     <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-6 flex flex-col gap-5">
       <div className="flex flex-col gap-2">
-        <p className="text-xs text-white/30">
-          Describe one sound, or layer several with "and" or "with"
-        </p>
+        <p className="text-xs text-white/30">Describe a scene — sounds are extracted automatically</p>
         <textarea
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(input, duration) }}}
-          placeholder={'e.g.  "rain"  ·  "fireplace crackling with soft wind"'}
+          placeholder="e.g. old man whittling in a rocking chair by a fire"
           rows={3}
           className="w-full bg-transparent text-sm text-white/80 placeholder-white/15 resize-none outline-none leading-relaxed"
         />
+        <div className="flex flex-wrap gap-1.5 mt-1">
+          {examples.map(ex => (
+            <button key={ex} onClick={() => setInput(ex)}
+              className="text-[10px] text-white/25 hover:text-white/60 border border-white/[0.06] hover:border-white/15 rounded-full px-2.5 py-1 transition-all">
+              {ex}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Duration picker */}
       <div className="flex flex-col gap-2">
         <p className="text-[10px] text-white/25 uppercase tracking-widest">Run time</p>
         <div className="flex gap-2">
           {DURATION_OPTIONS.map(opt => (
-            <button
-              key={String(opt.value)}
-              onClick={() => setDuration(opt.value)}
+            <button key={String(opt.value)} onClick={() => setDuration(opt.value)}
               className={`px-3 py-1.5 rounded-lg text-xs transition-all border ${
                 duration === opt.value
                   ? 'bg-white/10 border-white/25 text-white'
                   : 'border-white/[0.07] text-white/30 hover:text-white/60 hover:border-white/15'
-              }`}
-            >
+              }`}>
               {opt.label}
             </button>
           ))}
         </div>
       </div>
 
-      <button
-        onClick={() => onSubmit(input, duration)}
-        disabled={!input.trim()}
-        className="w-full py-2.5 rounded-xl text-xs tracking-wide transition-all duration-200 disabled:opacity-20 bg-white/[0.06] hover:bg-white/[0.12] border border-white/10"
-      >
-        Analyze & Generate ↗
+      <button onClick={() => onSubmit(input, duration)} disabled={!input.trim()}
+        className="w-full py-2.5 rounded-xl text-xs tracking-wide transition-all duration-200 disabled:opacity-20 bg-white/[0.06] hover:bg-white/[0.12] border border-white/10">
+        Generate ↗
       </button>
     </div>
   )
@@ -472,7 +611,7 @@ function ConfirmView({
       <div>
         <div className="flex items-center justify-between mb-4">
           <p className="text-[10px] text-white/30 uppercase tracking-widest">
-            {components.length === 1 ? 'Generating 1 sound' : `Generating ${components.length} sounds`}
+            {components.length} sound{components.length !== 1 ? 's' : ''} detected
           </p>
           <span className="text-[10px] text-white/25">Runtime: {durationLabel}</span>
         </div>
@@ -482,8 +621,7 @@ function ConfirmView({
               <span className="text-white/20 text-xs mt-0.5 flex-shrink-0">{i + 1}.</span>
               <div className="flex flex-col gap-1">
                 {c.warning && <p className="text-xs text-amber-400/70 leading-relaxed">⚠ {c.warning}</p>}
-                {!c.warning && <p className="text-xs text-white/40">"{c.originalText}"</p>}
-                <p className="text-sm text-white font-light">→ {c.displayLabel}</p>
+                <p className="text-sm text-white font-light">{c.displayLabel}</p>
                 <p className="text-[10px] text-white/20 italic leading-relaxed">"{c.enhancedPrompt}"</p>
               </div>
             </div>
@@ -509,13 +647,9 @@ const COMP_COLORS = ['#9C7A5E','#7EC8E3','#C4A0D4','#D4C87A','#F0A0B8','#A0D4B8'
 function ActiveView({
   components, filters, duration, onVolume, onFilter, onExpire, onReset,
 }: {
-  components: SoundComponent[]
-  filters: FilterSettings
-  duration: number | null
-  onVolume: (id: string, v: number) => void
-  onFilter: (k: keyof FilterSettings, v: number) => void
-  onExpire: () => void
-  onReset: () => void
+  components: SoundComponent[]; filters: FilterSettings; duration: number | null
+  onVolume: (id: string, v: number) => void; onFilter: (k: keyof FilterSettings, v: number) => void
+  onExpire: () => void; onReset: () => void
 }) {
   const [showFilters, setShowFilters] = useState(false)
   const [timeLeft, setTimeLeft] = useState<number | null>(duration)
@@ -528,33 +662,24 @@ function ActiveView({
     setTimeLeft(duration)
     const interval = setInterval(() => {
       setTimeLeft(prev => {
-        if (prev === null || prev <= 1) {
-          clearInterval(interval)
-          setExpired(true)
-          return 0
-        }
+        if (prev === null || prev <= 1) { clearInterval(interval); setExpired(true); return 0 }
         return prev - 1
       })
     }, 1000)
     return () => clearInterval(interval)
   }, [duration, allDone])
 
-  useEffect(() => {
-    if (expired) onExpire()
-  }, [expired]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (expired) onExpire() }, [expired]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const progress = duration && timeLeft !== null ? (1 - timeLeft / duration) : 0
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Timer bar */}
       {duration && timeLeft !== null && allDone && (
         <div className="flex flex-col gap-1.5">
           <div className="relative h-[2px] rounded-full bg-white/[0.06] overflow-hidden">
-            <div
-              className="absolute left-0 top-0 h-full bg-white/20 transition-all duration-1000"
-              style={{ width: `${progress * 100}%` }}
-            />
+            <div className="absolute left-0 top-0 h-full bg-white/20 transition-all duration-1000"
+              style={{ width: `${progress * 100}%` }} />
           </div>
           <div className="flex justify-between">
             <span className="text-[10px] text-white/25 tabular-nums">
@@ -565,27 +690,24 @@ function ActiveView({
         </div>
       )}
 
-      {/* Component volume rows */}
       <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5 flex flex-col gap-5">
         {components.map((comp, i) => {
           const color = COMP_COLORS[i % COMP_COLORS.length]
+          const isRetrying = (comp.retries ?? 0) > 0
           return (
             <div key={comp.id} className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  {comp.status === 'ready' && (
-                    <span className="w-1.5 h-1.5 rounded-full animate-pulse inline-block flex-shrink-0" style={{ background: color }} />
-                  )}
-                  {comp.status === 'generating' && (
-                    <span className="w-1.5 h-1.5 rounded-full animate-ping inline-block bg-white/25 flex-shrink-0" />
-                  )}
+                  {comp.status === 'ready' && <span className="w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0" style={{ background: color }} />}
+                  {comp.status === 'generating' && <span className="w-1.5 h-1.5 rounded-full animate-ping flex-shrink-0 bg-white/25" />}
                   {comp.status === 'failed' && <span className="text-red-400/50 text-xs">⚠</span>}
-                  <span className="text-sm font-light transition-colors" style={{ color: comp.status === 'ready' ? color : 'rgba(255,255,255,0.35)' }}>
+                  <span className="text-sm font-light transition-colors"
+                    style={{ color: comp.status === 'ready' ? color : 'rgba(255,255,255,0.35)' }}>
                     {comp.displayLabel}
                   </span>
                 </div>
                 <span className="text-[10px] text-white/20">
-                  {comp.status === 'generating' && 'Generating…'}
+                  {comp.status === 'generating' && (isRetrying ? `Retrying (${comp.retries}/2)…` : 'Generating…')}
                   {comp.status === 'failed' && 'Failed'}
                 </span>
               </div>
@@ -607,7 +729,6 @@ function ActiveView({
         })}
       </div>
 
-      {/* Sound shaping */}
       {allDone && anyReady && (
         <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5">
           <button onClick={() => setShowFilters(v => !v)}
@@ -657,7 +778,6 @@ function EQSlider({
   const midPct = centered ? ((0 - min) / (max - min)) * 100 : 0
   const fillLeft = centered ? (pct < midPct ? pct : midPct) : 0
   const fillWidth = centered ? Math.abs(pct - midPct) : pct
-
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between">
