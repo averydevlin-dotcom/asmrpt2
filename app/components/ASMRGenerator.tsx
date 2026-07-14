@@ -675,14 +675,14 @@ function IdleView({ onSubmit }: { onSubmit: (text: string, duration: number | nu
   return (
     <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-6 flex flex-col gap-5">
       <div className="flex flex-col gap-2">
-        <p className="text-xs text-white/30">Describe a scene — sounds are extracted automatically</p>
+        <p className="text-xs text-white/45">Describe a scene — sounds are extracted automatically</p>
         <textarea
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(input, duration) }}}
           placeholder="e.g. fireplace crackling with rain outside"
           rows={3}
-          className="w-full bg-transparent text-sm text-white/80 placeholder-white/15 resize-none outline-none leading-relaxed"
+          className="w-full bg-transparent text-sm text-white/80 placeholder-white/30 resize-none outline-none leading-relaxed"
         />
         <div className="flex flex-wrap gap-1.5 mt-1">
           {examples.map(ex => (
