@@ -547,11 +547,11 @@ function IdleView({ onSubmit }: { onSubmit: (text: string, duration: number | nu
   const [duration, setDuration] = useState<number | null>(null)
 
   const examples = [
-    'rain on a window',
-    'old man whittling by a fireplace',
+    'fireplace crackling with rain outside',
     'forest stream with rustling leaves',
-    'cat sleeping by a candle',
-    'crackling fire with soft wind',
+    'cat purring by a fireplace',
+    'soft rain on a tent',
+    'ocean waves with gentle wind',
   ]
 
   return (
