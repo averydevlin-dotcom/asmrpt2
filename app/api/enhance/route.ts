@@ -28,7 +28,9 @@ export async function POST(req: Request) {
     })
 
     const text = message.content[0].type === 'text' ? message.content[0].text : ''
-    const components = JSON.parse(text)
+    // Strip markdown code fences Haiku sometimes wraps around JSON
+    const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
+    const components = JSON.parse(cleaned)
 
     if (!Array.isArray(components)) throw new Error('Invalid response shape')
 
