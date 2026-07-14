@@ -255,7 +255,7 @@ const SCENE_ELEMENTS: SceneElement[] = [
   {
     patterns: [/\bthunder\w*/i, /\bthunderstorm\b/i, /\bstorm\b/i],
     label: 'Distant thunder',
-    promptFn: () => 'low rolling distant thunder, soft slow rumble, calm thunderstorm ambience, ASMR',
+    promptFn: () => 'continuous low rolling thunder rumble in the far distance, sustained soft deep resonance, no sharp cracks, gentle storm ambience ASMR',
     negType: 'rain',
   },
   // ── INDOOR / HOME ────────────────────────────────────────────────────
@@ -280,27 +280,27 @@ const SCENE_ELEMENTS: SceneElement[] = [
   {
     patterns: [/\blibrary\b/i, /\breading\s+room\b/i, /\bquiet\s+room\b/i],
     label: 'Library ambience',
-    promptFn: () => 'quiet library ambience, distant muffled pages, soft hushed atmosphere, calming ASMR',
+    promptFn: () => 'soft continuous library ambience, gentle steady background hum of a reading room, muffled distant atmosphere, calming ASMR',
     negType: 'tapping',
   },
   // ── TRAVEL ───────────────────────────────────────────────────────────
   {
     patterns: [/\btrain\b/i, /\brailway\b/i, /\brailroad\b/i, /\btracks\b/i, /\blocomotive\b/i],
     label: 'Train ambience',
-    promptFn: () => 'gentle rhythmic train wheels on rails, soft steady rumble of train travel, calming ASMR',
+    promptFn: () => 'continuous steady train wheels rolling on rails, smooth unbroken rhythmic rumble of train travel, calming ASMR',
     negType: 'tapping',
   },
   // ── MEDITATION ───────────────────────────────────────────────────────
   {
     patterns: [/\bsinging\s+bowl\b/i, /\btibetan\b/i, /\bmeditation\s+bell\b/i, /\bbowl\s+ring/i],
     label: 'Singing bowl',
-    promptFn: () => 'tibetan singing bowl resonating softly, gentle sustained meditative tone, calming ASMR texture',
+    promptFn: () => 'multiple overlapping tibetan singing bowls humming continuously, sustained resonant drone texture, meditative ambient ASMR',
     negType: '',
   },
   {
     patterns: [/\bpaint\w*/i, /\bwatercolor\w*/i, /\bcanvas\b/i, /\beasel\b/i],
     label: 'Brush strokes',
-    promptFn: () => 'soft paintbrush strokes on canvas, gentle rhythmic painting sounds, natural calming ASMR',
+    promptFn: () => 'continuous overlapping soft paintbrush strokes on canvas, steady flowing painting sounds, natural calming ASMR',
     negType: 'tapping',
   },
 ]
