@@ -126,7 +126,7 @@ const SCENE_ELEMENTS: SceneElement[] = [
     negType: 'fire',
   },
   {
-    patterns: [/\bfire(place|side)?\b/i, /\bcrackl\w*/i, /\bhearth\b/i, /\bcampfire\b/i],
+    patterns: [/\bfire(place|side)?\b/i, /\bcrackl\w*/i, /\bhearth\b/i],
     label: 'Crackling fire',
     promptFn: () => 'cozy natural fireplace crackling, warm gentle fire sounds, calming ASMR, soft and soothing',
     negType: 'fire',
@@ -150,7 +150,7 @@ const SCENE_ELEMENTS: SceneElement[] = [
     negType: 'water',
   },
   {
-    patterns: [/\bforest\b/i, /\bwoods\b/i, /\bleaves?\s+rustle/i, /\bfoliage\b/i],
+    patterns: [/\bleaves?\b/i, /\brustle\w*/i, /\bfoliage\b/i, /\bfern\w*/i],
     label: 'Rustling leaves',
     promptFn: () => 'leaves rustling gently in breeze, soft natural forest ASMR, calming and peaceful',
     negType: 'tapping',
@@ -219,6 +219,88 @@ const SCENE_ELEMENTS: SceneElement[] = [
     patterns: [/\bsand\b/i, /\bgravel\b/i],
     label: 'Sand',
     promptFn: () => 'soft sand moving gently, natural calming granular ASMR texture, soothing',
+    negType: 'tapping',
+  },
+  // ── NATURE & ENVIRONMENT ────────────────────────────────────────────
+  {
+    patterns: [/\bbird\w*/i, /\bbirdsong\b/i, /\bchirp\w*/i, /\bsongbird\w*/i, /\bdawn\b/i],
+    label: 'Birdsong',
+    promptFn: () => 'birds chirping softly at dawn, gentle natural birdsong, peaceful morning forest ASMR',
+    negType: '',
+  },
+  {
+    patterns: [/\bcricket\w*/i, /\bnight\s+insect\w*/i, /\bnight\s+sound\w*/i, /\bsummer\s+night\b/i],
+    label: 'Night crickets',
+    promptFn: () => 'crickets chirping on a warm summer night, gentle steady insect ambience, calming ASMR',
+    negType: '',
+  },
+  {
+    patterns: [/\bforest\b/i, /\bwoods\b/i, /\bwoodland\w*/i, /\bwild\w*\s+nature/i],
+    label: 'Forest ambience',
+    promptFn: () => 'deep forest ambience, gentle woodland soundscape with soft breeze and leaves, calming ASMR',
+    negType: 'rain',
+  },
+  {
+    patterns: [/\bwaterfall\b/i, /\bfalls\b/i, /\bcascade\b/i, /\bcataract\b/i],
+    label: 'Waterfall',
+    promptFn: () => 'gentle natural waterfall, soft steady cascade of water, calming peaceful ASMR',
+    negType: 'water',
+  },
+  {
+    patterns: [/\btent\b/i, /\bcamping\b/i, /\brain\s+on\b/i, /\bpatter\w*/i],
+    label: 'Rain on tent',
+    promptFn: () => 'rain pattering gently on tent canvas, soft camping rain, natural close-up ASMR texture',
+    negType: 'rain',
+  },
+  {
+    patterns: [/\bthunder\w*/i, /\bthunderstorm\b/i, /\bstorm\b/i],
+    label: 'Distant thunder',
+    promptFn: () => 'low rolling distant thunder, soft slow rumble, calm thunderstorm ambience, ASMR',
+    negType: 'rain',
+  },
+  // ── INDOOR / HOME ────────────────────────────────────────────────────
+  {
+    patterns: [/\bcampfire\b/i, /\bbonfire\b/i, /\boutdoor\s+fire\b/i],
+    label: 'Campfire outdoor',
+    promptFn: () => 'outdoor campfire crackling at night, natural wood fire, soft gentle ASMR, no wind',
+    negType: 'fire',
+  },
+  {
+    patterns: [/\baquarium\b/i, /\bfish\s+tank\b/i, /\bfish\b/i, /\bbubbl\w+\s+water/i],
+    label: 'Aquarium',
+    promptFn: () => 'aquarium bubbling, gentle fish tank water filter, soft constant water bubbles, ASMR',
+    negType: 'water',
+  },
+  {
+    patterns: [/\bfan\b/i, /\bwhite\s+noise\b/i, /\bdroning?\b/i, /\bhum\w*\s+fan/i],
+    label: 'Electric fan',
+    promptFn: () => 'soft steady electric fan hum, gentle white noise, calming ambient drone, ASMR',
+    negType: '',
+  },
+  {
+    patterns: [/\blibrary\b/i, /\breading\s+room\b/i, /\bquiet\s+room\b/i],
+    label: 'Library ambience',
+    promptFn: () => 'quiet library ambience, distant muffled pages, soft hushed atmosphere, calming ASMR',
+    negType: 'tapping',
+  },
+  // ── TRAVEL ───────────────────────────────────────────────────────────
+  {
+    patterns: [/\btrain\b/i, /\brailway\b/i, /\brailroad\b/i, /\btracks\b/i, /\blocomotive\b/i],
+    label: 'Train ambience',
+    promptFn: () => 'gentle rhythmic train wheels on rails, soft steady rumble of train travel, calming ASMR',
+    negType: 'tapping',
+  },
+  // ── MEDITATION ───────────────────────────────────────────────────────
+  {
+    patterns: [/\bsinging\s+bowl\b/i, /\btibetan\b/i, /\bmeditation\s+bell\b/i, /\bbowl\s+ring/i],
+    label: 'Singing bowl',
+    promptFn: () => 'tibetan singing bowl resonating softly, gentle sustained meditative tone, calming ASMR texture',
+    negType: '',
+  },
+  {
+    patterns: [/\bpaint\w*/i, /\bwatercolor\w*/i, /\bcanvas\b/i, /\beasel\b/i],
+    label: 'Brush strokes',
+    promptFn: () => 'soft paintbrush strokes on canvas, gentle rhythmic painting sounds, natural calming ASMR',
     negType: 'tapping',
   },
 ]
