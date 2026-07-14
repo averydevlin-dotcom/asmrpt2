@@ -702,7 +702,7 @@ function IdleView({ onSubmit }: { onSubmit: (text: string, duration: number | nu
         <div className="flex flex-wrap gap-1.5 mt-1">
           {examples.map(ex => (
             <button key={ex} onClick={() => setInput(ex)}
-              className="text-[10px] text-white/25 hover:text-white/60 border border-white/[0.06] hover:border-white/15 rounded-full px-2.5 py-1 transition-all">
+              className="text-[10px] text-white/40 hover:text-white/60 border border-white/[0.06] hover:border-white/15 rounded-full px-2.5 py-1 transition-all">
               {ex}
             </button>
           ))}
@@ -710,7 +710,7 @@ function IdleView({ onSubmit }: { onSubmit: (text: string, duration: number | nu
       </div>
 
       <div className="flex flex-col gap-2">
-        <p className="text-[10px] text-white/25 uppercase tracking-widest">Run time</p>
+        <p className="text-[10px] text-white/40 uppercase tracking-widest">Run time</p>
         <div className="flex gap-2">
           {DURATION_OPTIONS.map(opt => (
             <button key={String(opt.value)} onClick={() => setDuration(opt.value)}
@@ -746,16 +746,16 @@ function ConfirmView({
           <p className="text-[10px] text-white/30 uppercase tracking-widest">
             {components.length} sound{components.length !== 1 ? 's' : ''} detected
           </p>
-          <span className="text-[10px] text-white/25">Runtime: {durationLabel}</span>
+          <span className="text-[10px] text-white/40">Runtime: {durationLabel}</span>
         </div>
         <div className="flex flex-col gap-4">
           {components.map((c, i) => (
             <div key={c.id} className="flex gap-3">
-              <span className="text-white/20 text-xs mt-0.5 flex-shrink-0">{i + 1}.</span>
+              <span className="text-white/35 text-xs mt-0.5 flex-shrink-0">{i + 1}.</span>
               <div className="flex flex-col gap-1">
                 {c.warning && <p className="text-xs text-amber-400/70 leading-relaxed">⚠ {c.warning}</p>}
                 <p className="text-sm text-white font-light">{c.displayLabel}</p>
-                <p className="text-[10px] text-white/20 italic leading-relaxed">"{c.enhancedPrompt}"</p>
+                <p className="text-[10px] text-white/35 italic leading-relaxed">"{c.enhancedPrompt}"</p>
               </div>
             </div>
           ))}
@@ -815,7 +815,7 @@ function ActiveView({
               style={{ width: `${progress * 100}%` }} />
           </div>
           <div className="flex justify-between">
-            <span className="text-[10px] text-white/25 tabular-nums">
+            <span className="text-[10px] text-white/40 tabular-nums">
               {expired ? 'Fading out…' : formatTime(timeLeft)} remaining
             </span>
             <span className="text-[10px] text-white/15">{formatTime(duration)} total</span>
@@ -839,7 +839,7 @@ function ActiveView({
                     {comp.displayLabel}
                   </span>
                 </div>
-                <span className="text-[10px] text-white/20">
+                <span className="text-[10px] text-white/35">
                   {comp.status === 'generating' && (isRetrying ? `Retrying (${comp.retries}/2)…` : 'Generating…')}
                   {comp.status === 'failed' && 'Failed'}
                 </span>
@@ -854,7 +854,7 @@ function ActiveView({
                       onChange={e => onVolume(comp.id, Number(e.target.value))}
                       className="absolute inset-0 w-full opacity-0 cursor-pointer" />
                   </div>
-                  <span className="text-[10px] text-white/25 w-6 text-right tabular-nums">{comp.volume}</span>
+                  <span className="text-[10px] text-white/40 w-6 text-right tabular-nums">{comp.volume}</span>
                 </div>
               )}
             </div>
@@ -885,11 +885,11 @@ function ActiveView({
       )}
 
       <div className="flex items-center justify-between">
-        <button onClick={onReset} className="text-xs text-white/20 hover:text-white/55 transition-colors">
+        <button onClick={onReset} className="text-xs text-white/35 hover:text-white/55 transition-colors">
           ← Start over
         </button>
         {!allDone && (
-          <span className="text-xs text-white/20 animate-pulse">
+          <span className="text-xs text-white/35 animate-pulse">
             {components.filter(c => c.status === 'generating').length} generating…
           </span>
         )}
@@ -916,7 +916,7 @@ function EQSlider({
       <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-2">
           <span className="text-xs text-white/60">{label}</span>
-          <span className="text-[10px] text-white/20">{hint}</span>
+          <span className="text-[10px] text-white/35">{hint}</span>
         </div>
         <span className="text-[10px] text-white/30 tabular-nums w-12 text-right">
           {centered ? (value > 0 ? `+${value}` : value) + ' dB' : value + '%'}
