@@ -352,11 +352,12 @@ function extractSceneComponents(raw: string): SoundComponent[] {
   }
 
   if (found.length === 0) {
+    const t = raw.trim()
     found.push({
       id: Math.random().toString(36).slice(2, 8),
-      originalText: raw.trim(),
-      enhancedPrompt: `${raw.trim()}, natural organic texture, soft calming ASMR, gentle and soothing, ${BASE_NEG}`,
-      displayLabel: raw.trim(),
+      originalText: t,
+      enhancedPrompt: `${t} sounds, soft gentle ${t} ASMR texture, slow calming ${t}, quiet and soothing ambient, ${BASE_NEG}`,
+      displayLabel: t,
       status: 'pending', volume: 70,
     })
   }
