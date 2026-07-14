@@ -351,17 +351,7 @@ function extractSceneComponents(raw: string): SoundComponent[] {
     }
   }
 
-  if (found.length === 0) {
-    const t = raw.trim()
-    found.push({
-      id: Math.random().toString(36).slice(2, 8),
-      originalText: t,
-      enhancedPrompt: `${t} sounds, soft gentle ${t} ASMR texture, slow calming ${t}, quiet and soothing ambient, ${BASE_NEG}`,
-      displayLabel: t,
-      status: 'pending', volume: 70,
-    })
-  }
-
+  // Return what we found — may be empty if nothing matched
   return found
 }
 
@@ -503,9 +493,52 @@ export default function ASMRGenerator() {
     ctxRef.current?.close(); ctxRef.current = null
   }
 
-  function handleSubmit(raw: string, duration: number | null) {
+  async function handleSubmit(raw: string, duration: number | null) {
     if (!raw.trim()) return
-    setState(prev => ({ ...prev, phase: 'confirming', components: extractSceneComponents(raw), duration }))
+
+    const BASE_NEG_LOCAL = 'no music, no singing, no voice, no speech, no percussion, no sudden loud sounds, no reverb tail, no distortion, isolated ambient texture only'
+
+    // Try regex database first
+    let components = extractSceneComponents(raw)
+
+    // Nothing matched — ask Claude Haiku to decompose the scene
+    if (components.length === 0) {
+      try {
+        const res = await fetch('/api/enhance', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ input: raw }),
+        })
+        if (res.ok) {
+          const { components: enhanced } = await res.json()
+          components = (enhanced as { label: string; prompt: string }[]).map(e => ({
+            id: Math.random().toString(36).slice(2, 8),
+            originalText: raw.trim(),
+            enhancedPrompt: `${e.prompt}, ${BASE_NEG_LOCAL}`,
+            displayLabel: e.label,
+            status: 'pending' as const,
+            volume: 70,
+          }))
+        }
+      } catch (e) {
+        console.error('enhance failed:', e)
+      }
+    }
+
+    // Final fallback if everything failed
+    if (components.length === 0) {
+      const t = raw.trim()
+      components = [{
+        id: Math.random().toString(36).slice(2, 8),
+        originalText: t,
+        enhancedPrompt: `${t} sounds, soft gentle ${t} ASMR texture, slow calming ${t}, quiet and soothing ambient, ${BASE_NEG_LOCAL}`,
+        displayLabel: t,
+        status: 'pending' as const,
+        volume: 70,
+      }]
+    }
+
+    setState(prev => ({ ...prev, phase: 'confirming', components, duration }))
   }
 
   async function handleGenerate(components: SoundComponent[], duration: number | null) {
