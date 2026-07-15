@@ -615,14 +615,14 @@ export default function ASMRGenerator() {
       const t = audioCtx.currentTime
       f.master.gain.setValueAtTime(f.master.gain.value, t)
       f.master.gain.linearRampToValueAtTime(0, t + 3)
-      setTimeout(() => { stopAll(); setState({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null }) }, 3500)
+      setTimeout(() => { stopAll(); setState(prev => ({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null, lastInput: prev.lastInput })) }, 3500)
     } else {
-      stopAll(); setState({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null })
+      stopAll(); setState(prev => ({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null, lastInput: prev.lastInput }))
     }
   }
 
   function handleReset() {
-    stopAll(); setState({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null })
+    stopAll(); setState(prev => ({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null, lastInput: prev.lastInput }))
   }
 
   useEffect(() => () => stopAll(), []) // eslint-disable-line react-hooks/exhaustive-deps
