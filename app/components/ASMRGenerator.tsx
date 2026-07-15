@@ -32,6 +32,7 @@ interface AppState {
   components: SoundComponent[]
   filters: FilterSettings
   duration: number | null
+  lastInput: string
 }
 
 // ─── NEGATIVE CONSTRAINTS ────────────────────────────────────────────
@@ -430,7 +431,7 @@ function formatTime(s: number): string {
 
 export default function ASMRGenerator() {
   const [state, setState] = useState<AppState>({
-    phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null,
+    phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null, lastInput: '',
   })
 
   const ctxRef = useRef<AudioContext | null>(null)
@@ -538,7 +539,7 @@ export default function ASMRGenerator() {
       }]
     }
 
-    setState(prev => ({ ...prev, phase: 'confirming', components, duration }))
+    setState(prev => ({ ...prev, phase: 'confirming', components, duration, lastInput: raw.trim() }))
   }
 
   async function handleGenerate(components: SoundComponent[], duration: number | null) {
@@ -650,7 +651,7 @@ export default function ASMRGenerator() {
       </div>
 
       <div className="w-full max-w-lg">
-        {state.phase === 'idle' && <IdleView onSubmit={handleSubmit} />}
+        {state.phase === 'idle' && <IdleView onSubmit={handleSubmit} initialInput={state.lastInput} />}
         {state.phase === 'confirming' && (
           <ConfirmView
             components={state.components} duration={state.duration}
@@ -675,8 +676,8 @@ export default function ASMRGenerator() {
 
 // ─── IDLE VIEW ───────────────────────────────────────────────────────
 
-function IdleView({ onSubmit }: { onSubmit: (text: string, duration: number | null) => void }) {
-  const [input, setInput] = useState('')
+function IdleView({ onSubmit, initialInput = '' }: { onSubmit: (text: string, duration: number | null) => void; initialInput?: string }) {
+  const [input, setInput] = useState(initialInput)
   const [duration, setDuration] = useState<number | null>(null)
 
   const examples = [
