@@ -1,20 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 // ─── VOICE SEARCH ────────────────────────────────────────────────────
-// For whisper delivery: query ElevenLabs shared voice library for voices
-// that have "whisper" in their description. Cached in memory per gender+accent
-// so we don't hammer the API on every request.
+// Queries the ElevenLabs shared voice library combining BOTH accent and
+// delivery type so "british whisper" finds a British-accented whisper voice
+// and "soft american" finds a calm American narrator — not just any voice.
+// Cached in memory per gender+accent+delivery to avoid repeated API calls.
 
 const voiceCache: Map<string, string[]> = new Map()
 
-async function searchWhisperVoices(apiKey: string, gender: string, accent: string): Promise<string[]> {
-  const cacheKey = `${gender}_${accent}`
+async function searchVoices(
+  apiKey: string,
+  gender: string,
+  accent: string,
+  delivery: string
+): Promise<string[]> {
+  const cacheKey = `${gender}_${accent}_${delivery}`
   if (voiceCache.has(cacheKey)) return voiceCache.get(cacheKey)!
 
-  // Try accent-specific first ("british whisper"), then generic ("whisper asmr")
-  const terms = accent !== 'american'
-    ? [`${accent} whisper`, 'whisper asmr', 'whisper']
-    : ['whisper asmr', 'asmr whisper', 'whisper']
+  // Search terms are ordered from most specific to most generic.
+  // We try each until EL returns results, so accent+delivery is always attempted first.
+  let terms: string[]
+  if (delivery === 'whisper') {
+    terms = accent !== 'american'
+      ? [`${accent} whisper`, `${accent} asmr`, 'whisper asmr', 'asmr whisper', 'whisper']
+      : ['asmr whisper', 'whisper asmr', 'whisper']
+  } else {
+    // soft / calm delivery
+    terms = accent !== 'american'
+      ? [`${accent} soft`, `${accent} calm`, `${accent} narrator`, accent, 'soft calm', 'calm narrator']
+      : ['soft narrator', 'calm voice', 'gentle narrator', 'soft']
+  }
 
   for (const term of terms) {
     try {
@@ -36,27 +51,12 @@ async function searchWhisperVoices(apiKey: string, gender: string, accent: strin
     } catch { continue }
   }
 
-  // Fallback to known ASMR-friendly voices if library search returns nothing
-  const fallback = gender === 'male'
-    ? ['TxGEqnHWrfWFTfGW9XjX', 'pNInz6obpgDQGcFmaJgB']
-    : ['EXAVITQu4vr4xnSDxMaL', 'XB0fDUnXU5powFXDhCwa']
+  // Final fallback: known-good ElevenLabs premade voices
+  const fallback = delivery === 'whisper'
+    ? (gender === 'male' ? ['TxGEqnHWrfWFTfGW9XjX'] : ['EXAVITQu4vr4xnSDxMaL'])
+    : (gender === 'male' ? ['pNInz6obpgDQGcFmaJgB'] : ['21m00Tcm4TlvDq8ikWAM'])
   voiceCache.set(cacheKey, fallback)
   return fallback
-}
-
-// ─── SOFT VOICE ROSTER ───────────────────────────────────────────────
-// For non-whisper delivery: curated premade voices, stable and warm.
-// Update IDs from elevenlabs.io/voice-library for better accent coverage.
-
-const SOFT_VOICES: Record<string, string> = {
-  american_female: '21m00Tcm4TlvDq8ikWAM', // Rachel
-  american_male:   'pNInz6obpgDQGcFmaJgB', // Adam
-  british_female:  'XB0fDUnXU5powFXDhCwa', // Charlotte
-  british_male:    'JBFqnCBsd6RMkjVDRZzb', // George
-  australian_female: '21m00Tcm4TlvDq8ikWAM', // swap for AU voice when available
-  australian_male:   'pNInz6obpgDQGcFmaJgB',
-  irish_female:    'XB0fDUnXU5powFXDhCwa',
-  irish_male:      'JBFqnCBsd6RMkjVDRZzb',
 }
 
 // ─── HANDLER ─────────────────────────────────────────────────────────
@@ -70,26 +70,16 @@ export async function POST(req: NextRequest) {
     const apiKey = process.env.ELEVENLABS_API_KEY
     if (!apiKey) return NextResponse.json({ error: 'ELEVENLABS_API_KEY not configured' }, { status: 500 })
 
-    let voiceId: string
-    let stability: number
-    let speed: number
-    let model: string
+    // Find the best matching voice for this accent + delivery combination
+    const ids = await searchVoices(apiKey, gender, accent, delivery)
+    // Rotate across top 5 for variety across sessions
+    const voiceId = ids[Math.floor(Math.random() * Math.min(5, ids.length))]
 
-    if (delivery === 'whisper') {
-      // Dynamically pull a whisper voice from EL shared library
-      const ids = await searchWhisperVoices(apiKey, gender, accent)
-      // Rotate across top 5 results for variety across sessions
-      voiceId = ids[Math.floor(Math.random() * Math.min(5, ids.length))]
-      stability = 0.07   // very low = breathy, whispery quality
-      speed     = 0.78   // slow and intimate
-      model     = 'eleven_turbo_v2_5' // better nuanced delivery for whispers
-    } else {
-      // Soft narration — use stable premade voice, rich model
-      voiceId   = SOFT_VOICES[`${accent}_${gender}`] ?? SOFT_VOICES['american_female']
-      stability = 0.50
-      speed     = 0.88
-      model     = 'eleven_multilingual_v2'
-    }
+    // Voice settings differ significantly between whisper and soft delivery
+    const isWhisper = delivery === 'whisper'
+    const stability      = isWhisper ? 0.07 : 0.50  // low = breathy/whispery; high = stable/smooth
+    const speed          = isWhisper ? 0.78 : 0.88
+    const model          = isWhisper ? 'eleven_turbo_v2_5' : 'eleven_multilingual_v2'
 
     const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
       method: 'POST',
