@@ -9,105 +9,94 @@ interface ELVoice {
   labels?: {
     accent?: string
     description?: string
-    age?: string
     gender?: string
+    age?: string
     'use case'?: string
   }
 }
 
-// ─── KEYWORD MAPS ────────────────────────────────────────────────────
+// ─── ACCENT MATCHING ─────────────────────────────────────────────────
+// ElevenLabs labels.accent values: "american", "british", "australian", "irish", etc.
 
-const ACCENT_KEYWORDS: Record<string, string[]> = {
-  british:    ['british', 'uk', 'english', 'england'],
-  australian: ['australian', 'australia', 'aussie'],
-  irish:      ['irish', 'ireland'],
-  american:   ['american', 'us ', 'usa', 'north american'],
+const ACCENT_MATCH: Record<string, string[]> = {
+  british:    ['british', 'uk', 'english'],
+  australian: ['australian', 'aussie'],
+  irish:      ['irish'],
+  american:   ['american'],
 }
 
-const DELIVERY_KEYWORDS: Record<string, string[]> = {
-  whisper: ['whisper', 'whispering', 'asmr', 'breathy', 'hushed'],
-  soft:    ['soft', 'calm', 'gentle', 'sooth', 'mellow', 'quiet', 'peaceful', 'relax'],
+function accentScore(voice: ELVoice, accent: string): number {
+  const keywords = ACCENT_MATCH[accent] ?? [accent]
+  const label = (voice.labels?.accent ?? '').toLowerCase()
+  const name  = voice.name.toLowerCase()
+  // Exact match in labels.accent is best; name match is second best
+  if (keywords.some(k => label === k || label.includes(k))) return 2
+  if (keywords.some(k => name.includes(k))) return 1
+  return 0
 }
 
-// ─── VOICE SEARCH ────────────────────────────────────────────────────
+// ─── VOICE CACHE ─────────────────────────────────────────────────────
 
 const voiceCache: Map<string, string[]> = new Map()
 
-function matchesKeywords(voice: ELVoice, keywords: string[]): boolean {
-  const haystack = [
-    voice.name ?? '',
-    voice.description ?? '',
-    voice.labels?.accent ?? '',
-    voice.labels?.description ?? '',
-    voice.labels?.['use case'] ?? '',
-  ].join(' ').toLowerCase()
-  return keywords.some(kw => haystack.includes(kw))
-}
+// ─── VOICE FINDER ────────────────────────────────────────────────────
+// Mirrors exactly what the user does in EL's UI:
+//   1. Search "whisper" (or "soft") → gets 100+ results
+//   2. Filter by gender (API param)
+//   3. Filter by accent (client-side on labels.accent)
 
-async function fetchVoices(apiKey: string, search: string, gender: string, pageSize = 20): Promise<ELVoice[]> {
-  try {
-    const url = new URL('https://api.elevenlabs.io/v1/shared-voices')
-    url.searchParams.set('search', search)
-    url.searchParams.set('gender', gender)
-    url.searchParams.set('page_size', String(pageSize))
-    url.searchParams.set('sort', 'trending')
-    const res = await fetch(url.toString(), { headers: { 'xi-api-key': apiKey } })
-    if (!res.ok) return []
-    const data = await res.json()
-    return data.voices ?? []
-  } catch { return [] }
-}
-
-async function findVoice(apiKey: string, gender: string, accent: string, delivery: string): Promise<string[]> {
+async function findVoice(
+  apiKey: string,
+  gender: string,
+  accent: string,
+  delivery: string
+): Promise<string[]> {
   const cacheKey = `${gender}_${accent}_${delivery}`
   if (voiceCache.has(cacheKey)) return voiceCache.get(cacheKey)!
 
-  const accentKws   = ACCENT_KEYWORDS[accent] ?? [accent]
-  const deliveryKws = DELIVERY_KEYWORDS[delivery] ?? DELIVERY_KEYWORDS['soft']
+  // Search term mirrors EL's own search field: "whisper" or "soft"
+  const searchTerm = delivery === 'whisper' ? 'whisper' : 'soft'
 
-  // ── Pass 1: combined search "british whisper" — EL's own search engine handles it ──
-  if (accent !== 'american') {
-    const combined = await fetchVoices(apiKey, `${accent} ${delivery}`, gender, 20)
-    const bothMatch = combined.filter(v => matchesKeywords(v, accentKws) && matchesKeywords(v, deliveryKws))
-    if (bothMatch.length > 0) {
-      const ids = bothMatch.slice(0, 5).map(v => v.voice_id)
-      voiceCache.set(cacheKey, ids); return ids
-    }
+  try {
+    const url = new URL('https://api.elevenlabs.io/v1/shared-voices')
+    url.searchParams.set('search', searchTerm)
+    url.searchParams.set('gender', gender)      // EL filters by labels.gender
+    url.searchParams.set('page_size', '100')    // get enough to filter accent from
+    url.searchParams.set('sort', 'trending')
+
+    const res = await fetch(url.toString(), { headers: { 'xi-api-key': apiKey } })
+    if (!res.ok) throw new Error(`EL voices API: ${res.status}`)
+
+    const data = await res.json()
+    const voices: ELVoice[] = data.voices ?? []
+
+    if (voices.length === 0) throw new Error('No voices returned')
+
+    // Score each voice by accent match, sort descending
+    const scored = voices
+      .map(v => ({ v, score: accentScore(v, accent) }))
+      .sort((a, b) => b.score - a.score)
+
+    // Take top 5 — if any have accent score > 0, those will be first
+    const top5 = scored.slice(0, 5).map(x => x.v.voice_id)
+    voiceCache.set(cacheKey, top5)
+    return top5
+  } catch (e) {
+    console.error('findVoice error:', e)
+    // Hard fallback — known ASMR-friendly EL premade voices
+    const fallback = delivery === 'whisper'
+      ? (gender === 'male' ? ['TxGEqnHWrfWFTfGW9XjX'] : ['EXAVITQu4vr4xnSDxMaL'])
+      : (gender === 'male' ? ['pNInz6obpgDQGcFmaJgB'] : ['21m00Tcm4TlvDq8ikWAM'])
+    voiceCache.set(cacheKey, fallback)
+    return fallback
   }
-
-  // ── Pass 2: search delivery keyword + gender, filter results for accent ──
-  const deliveryTerms = delivery === 'whisper'
-    ? ['whisper asmr', 'asmr whisper', 'whisper']
-    : ['soft calm', 'calm gentle', 'soft narrator', 'soft']
-
-  for (const term of deliveryTerms) {
-    const voices = await fetchVoices(apiKey, term, gender, 50)
-    const accentMatch = voices.filter(v => matchesKeywords(v, accentKws))
-    if (accentMatch.length > 0) {
-      const ids = accentMatch.slice(0, 5).map(v => v.voice_id)
-      voiceCache.set(cacheKey, ids); return ids
-    }
-    // No accent match — save delivery-only results as a fallback
-    const deliveryMatch = voices.filter(v => matchesKeywords(v, deliveryKws))
-    if (deliveryMatch.length > 0) {
-      const ids = deliveryMatch.slice(0, 5).map(v => v.voice_id)
-      voiceCache.set(cacheKey, ids); return ids
-    }
-  }
-
-  // ── Pass 3: hard fallback — at least gets the delivery right ──
-  const hardFallback = delivery === 'whisper'
-    ? (gender === 'male' ? ['TxGEqnHWrfWFTfGW9XjX'] : ['EXAVITQu4vr4xnSDxMaL'])
-    : (gender === 'male' ? ['pNInz6obpgDQGcFmaJgB'] : ['21m00Tcm4TlvDq8ikWAM'])
-  voiceCache.set(cacheKey, hardFallback)
-  return hardFallback
 }
 
 // ─── HANDLER ─────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
-    const { script, accent = 'american', gender = 'female', delivery = 'soft' } = await req.json()
+    const { script, accent = 'american', gender = 'female', delivery = 'whisper' } = await req.json()
 
     if (!script?.trim()) return NextResponse.json({ error: 'No script' }, { status: 400 })
 
@@ -118,7 +107,7 @@ export async function POST(req: NextRequest) {
     const voiceId = ids[Math.floor(Math.random() * ids.length)]
 
     const isWhisper = delivery === 'whisper'
-    const stability = isWhisper ? 0.07 : 0.50
+    const stability = isWhisper ? 0.07 : 0.50   // very low = breathy whisper quality
     const speed     = isWhisper ? 0.78 : 0.88
     const model     = isWhisper ? 'eleven_turbo_v2_5' : 'eleven_multilingual_v2'
 
