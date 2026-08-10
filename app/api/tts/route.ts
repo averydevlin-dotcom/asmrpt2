@@ -1,49 +1,65 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-// Curated ElevenLabs voice roster
-// Update IDs from: elevenlabs.io/voice-library
-//
-// Whisper tuning: stability must be very low (0.05–0.10) to get breathy delivery.
-// eleven_turbo_v2_5 handles nuanced whisper better than eleven_multilingual_v2.
-// Soft delivery uses eleven_multilingual_v2 for richer tone at normal stability.
+// ─── VOICE SEARCH ────────────────────────────────────────────────────
+// For whisper delivery: query ElevenLabs shared voice library for voices
+// that have "whisper" in their description. Cached in memory per gender+accent
+// so we don't hammer the API on every request.
 
-interface VoiceConfig {
-  voiceId: string
-  stability: number
-  similarity_boost: number
-  speed: number
-  model: string
+const voiceCache: Map<string, string[]> = new Map()
+
+async function searchWhisperVoices(apiKey: string, gender: string, accent: string): Promise<string[]> {
+  const cacheKey = `${gender}_${accent}`
+  if (voiceCache.has(cacheKey)) return voiceCache.get(cacheKey)!
+
+  // Try accent-specific first ("british whisper"), then generic ("whisper asmr")
+  const terms = accent !== 'american'
+    ? [`${accent} whisper`, 'whisper asmr', 'whisper']
+    : ['whisper asmr', 'asmr whisper', 'whisper']
+
+  for (const term of terms) {
+    try {
+      const url = new URL('https://api.elevenlabs.io/v1/shared-voices')
+      url.searchParams.set('search', term)
+      url.searchParams.set('gender', gender)
+      url.searchParams.set('page_size', '10')
+      url.searchParams.set('sort', 'trending')
+
+      const res = await fetch(url.toString(), { headers: { 'xi-api-key': apiKey } })
+      if (!res.ok) continue
+
+      const data = await res.json()
+      const ids: string[] = (data.voices ?? []).map((v: { voice_id: string }) => v.voice_id)
+      if (ids.length > 0) {
+        voiceCache.set(cacheKey, ids)
+        return ids
+      }
+    } catch { continue }
+  }
+
+  // Fallback to known ASMR-friendly voices if library search returns nothing
+  const fallback = gender === 'male'
+    ? ['TxGEqnHWrfWFTfGW9XjX', 'pNInz6obpgDQGcFmaJgB']
+    : ['EXAVITQu4vr4xnSDxMaL', 'XB0fDUnXU5powFXDhCwa']
+  voiceCache.set(cacheKey, fallback)
+  return fallback
 }
 
-const VOICE_ROSTER: Record<string, VoiceConfig> = {
-  // American female
-  american_female_soft:    { voiceId: '21m00Tcm4TlvDq8ikWAM', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
-  american_female_whisper: { voiceId: 'EXAVITQu4vr4xnSDxMaL', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
-  // American male
-  american_male_soft:      { voiceId: 'pNInz6obpgDQGcFmaJgB', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
-  american_male_whisper:   { voiceId: 'TxGEqnHWrfWFTfGW9XjX', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
-  // British female
-  british_female_soft:     { voiceId: 'XB0fDUnXU5powFXDhCwa', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
-  british_female_whisper:  { voiceId: 'XB0fDUnXU5powFXDhCwa', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
-  // British male
-  british_male_soft:       { voiceId: 'JBFqnCBsd6RMkjVDRZzb', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
-  british_male_whisper:    { voiceId: 'JBFqnCBsd6RMkjVDRZzb', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
-  // Australian — swap in real AU voice IDs from ElevenLabs voice library for best results
-  australian_female_soft:    { voiceId: '21m00Tcm4TlvDq8ikWAM', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
-  australian_female_whisper: { voiceId: 'EXAVITQu4vr4xnSDxMaL', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
-  australian_male_soft:      { voiceId: 'pNInz6obpgDQGcFmaJgB', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
-  australian_male_whisper:   { voiceId: 'TxGEqnHWrfWFTfGW9XjX', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
-  // Irish — swap in real Irish voice IDs for best results
-  irish_female_soft:    { voiceId: 'XB0fDUnXU5powFXDhCwa', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
-  irish_female_whisper: { voiceId: 'XB0fDUnXU5powFXDhCwa', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
-  irish_male_soft:      { voiceId: 'JBFqnCBsd6RMkjVDRZzb', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
-  irish_male_whisper:   { voiceId: 'JBFqnCBsd6RMkjVDRZzb', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
+// ─── SOFT VOICE ROSTER ───────────────────────────────────────────────
+// For non-whisper delivery: curated premade voices, stable and warm.
+// Update IDs from elevenlabs.io/voice-library for better accent coverage.
+
+const SOFT_VOICES: Record<string, string> = {
+  american_female: '21m00Tcm4TlvDq8ikWAM', // Rachel
+  american_male:   'pNInz6obpgDQGcFmaJgB', // Adam
+  british_female:  'XB0fDUnXU5powFXDhCwa', // Charlotte
+  british_male:    'JBFqnCBsd6RMkjVDRZzb', // George
+  australian_female: '21m00Tcm4TlvDq8ikWAM', // swap for AU voice when available
+  australian_male:   'pNInz6obpgDQGcFmaJgB',
+  irish_female:    'XB0fDUnXU5powFXDhCwa',
+  irish_male:      'JBFqnCBsd6RMkjVDRZzb',
 }
 
-function pickVoice(accent: string, gender: string, delivery: string) {
-  const key = `${accent}_${gender}_${delivery}`
-  return VOICE_ROSTER[key] ?? VOICE_ROSTER['american_female_soft']
-}
+// ─── HANDLER ─────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
@@ -54,19 +70,37 @@ export async function POST(req: NextRequest) {
     const apiKey = process.env.ELEVENLABS_API_KEY
     if (!apiKey) return NextResponse.json({ error: 'ELEVENLABS_API_KEY not configured' }, { status: 500 })
 
-    const voice = pickVoice(accent, gender, delivery)
+    let voiceId: string
+    let stability: number
+    let speed: number
+    let model: string
 
-    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice.voiceId}`, {
+    if (delivery === 'whisper') {
+      // Dynamically pull a whisper voice from EL shared library
+      const ids = await searchWhisperVoices(apiKey, gender, accent)
+      // Rotate across top 5 results for variety across sessions
+      voiceId = ids[Math.floor(Math.random() * Math.min(5, ids.length))]
+      stability = 0.07   // very low = breathy, whispery quality
+      speed     = 0.78   // slow and intimate
+      model     = 'eleven_turbo_v2_5' // better nuanced delivery for whispers
+    } else {
+      // Soft narration — use stable premade voice, rich model
+      voiceId   = SOFT_VOICES[`${accent}_${gender}`] ?? SOFT_VOICES['american_female']
+      stability = 0.50
+      speed     = 0.88
+      model     = 'eleven_multilingual_v2'
+    }
+
+    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
       method: 'POST',
       headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: script.trim(),
-        model_id: voice.model,
-        // speed is a top-level param, NOT inside voice_settings
-        speed: voice.speed,
+        model_id: model,
+        speed,
         voice_settings: {
-          stability: voice.stability,
-          similarity_boost: voice.similarity_boost,
+          stability,
+          similarity_boost: 0.85,
           use_speaker_boost: false,
         },
       }),
@@ -78,9 +112,7 @@ export async function POST(req: NextRequest) {
     }
 
     const audioData = await response.arrayBuffer()
-    return new NextResponse(audioData, {
-      headers: { 'Content-Type': 'audio/mpeg' },
-    })
+    return new NextResponse(audioData, { headers: { 'Content-Type': 'audio/mpeg' } })
   } catch (e) {
     console.error('tts error:', e)
     return NextResponse.json({ error: String(e) }, { status: 500 })
