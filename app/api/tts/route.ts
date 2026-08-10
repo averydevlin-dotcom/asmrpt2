@@ -50,12 +50,13 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         text: script.trim(),
         model_id: 'eleven_multilingual_v2',
+        // speed is a top-level param, NOT inside voice_settings
+        speed: voice.speed,
         voice_settings: {
           stability: voice.stability,
           similarity_boost: voice.similarity_boost,
-          style: voice.style,
           use_speaker_boost: false,
-          speed: voice.speed,
+          // style omitted — requires Creator plan; remove if causing 422
         },
       }),
     })
