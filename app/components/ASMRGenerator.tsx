@@ -730,9 +730,10 @@ function IdleView({ onSubmit, initialInput = '' }: { onSubmit: (text: string, du
   const examples = [
     'fireplace crackling with rain outside',
     'forest stream with rustling leaves',
-    'cat purring by a fireplace',
+    'British woman whispering by a rainy window',
     'soft rain on a tent',
     'ocean waves with gentle wind',
+    'soft male voice with crackling fireplace',
   ]
 
   return (
