@@ -16,6 +16,7 @@ interface SoundComponent {
   audioBuffer?: AudioBuffer
   warning?: string
   retries?: number
+  voiceConfig?: { accent: string; gender: string; delivery: string; script: string }
 }
 
 interface FilterSettings {
@@ -315,6 +316,11 @@ const NON_ASMR: { patterns: RegExp[]; warning: string; fallbackIdx: number }[] =
     warning: "Spoken voice isn't supported. Using breathing instead.", fallbackIdx: 19 },
 ]
 
+// ─── VOICE CUE DETECTION ─────────────────────────────────────────────
+// Only triggered when user explicitly requests a voice/accent/whispering
+
+const VOICE_CUE_RE = /\b(british|australian|irish|american\s+accent|whisper\w*|female\s+voice|male\s+voice|wom[ae]n['s]*\s+voice|man['s]*\s+voice|soft\s+voice|gentle\s+voice|a\s+(female|male|woman|man)\s+(whispering|voice)|narrator\w*)\b/i
+
 // ─── SCENE EXTRACTION ────────────────────────────────────────────────
 
 function extractSceneComponents(raw: string): SoundComponent[] {
@@ -352,7 +358,6 @@ function extractSceneComponents(raw: string): SoundComponent[] {
     }
   }
 
-  // Return what we found — may be empty if nothing matched
   return found
 }
 
@@ -362,8 +367,6 @@ function validateAudio(buffer: AudioBuffer): { valid: boolean; reason?: string }
   const data = buffer.getChannelData(0)
   const rmsVal = Math.sqrt(data.reduce((s, x) => s + x * x, 0) / data.length)
   if (rmsVal < 0.0005) return { valid: false, reason: 'nearly silent' }
-  // ASMR sounds are inherently sparse — gaps between raindrops, fire crackles etc.
-  // Only count truly silent samples (< 0.001) and allow up to 90%.
   let silent = 0
   for (let i = 0; i < data.length; i++) if (Math.abs(data[i]) < 0.001) silent++
   if (silent / data.length > 0.90) return { valid: false, reason: 'too much silence' }
@@ -539,6 +542,39 @@ export default function ASMRGenerator() {
       }]
     }
 
+    // Voice detection — only added if user explicitly requests a voice/accent/whispering
+    if (VOICE_CUE_RE.test(raw)) {
+      try {
+        const vRes = await fetch('/api/voice-script', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ input: raw }),
+        })
+        if (vRes.ok) {
+          const { script, accent, gender, delivery, label } = await vRes.json()
+          if (script) {
+            const voiceComp: SoundComponent = {
+              id: Math.random().toString(36).slice(2, 8),
+              originalText: raw,
+              enhancedPrompt: script,
+              displayLabel: label ?? 'Narrator',
+              status: 'pending',
+              volume: 85,
+              voiceConfig: {
+                accent: accent ?? 'american',
+                gender: gender ?? 'female',
+                delivery: delivery ?? 'soft',
+                script,
+              },
+            }
+            components = [voiceComp, ...components].slice(0, 4)
+          }
+        }
+      } catch (e) {
+        console.error('voice detection failed:', e)
+      }
+    }
+
     setState(prev => ({ ...prev, phase: 'confirming', components, duration, lastInput: raw.trim() }))
   }
 
@@ -554,25 +590,38 @@ export default function ASMRGenerator() {
     await Promise.all(components.map(async comp => {
       let buf: AudioBuffer | null = null
       let attempts = 0
+      const isVoice = !!comp.voiceConfig
+      const maxAttempts = isVoice ? 1 : 3
 
-      while (attempts < 3 && !buf) {
+      while (attempts < maxAttempts && !buf) {
         try {
           const prompt = attempts === 0 ? comp.enhancedPrompt : retryPrompt(comp.enhancedPrompt, attempts)
-          if (attempts > 0) {
+          if (!isVoice && attempts > 0) {
             setState(prev => ({
               ...prev,
               components: prev.components.map(c => c.id === comp.id ? { ...c, retries: attempts } : c),
             }))
           }
-          const res = await fetch('/api/generate', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: prompt }),
-          })
+          const res = isVoice
+            ? await fetch('/api/tts', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  script: comp.voiceConfig!.script,
+                  accent: comp.voiceConfig!.accent,
+                  gender: comp.voiceConfig!.gender,
+                  delivery: comp.voiceConfig!.delivery,
+                }),
+              })
+            : await fetch('/api/generate', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: prompt }),
+              })
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
           const decoded = await audioCtx.decodeAudioData(await res.arrayBuffer())
-          if (validateAudio(decoded).valid || attempts === 2) buf = decoded
+          // Skip silence validation for voice — TTS has intentional pauses between words
+          if (isVoice || validateAudio(decoded).valid || attempts === 2) buf = decoded
           else attempts++
-        } catch { attempts++; if (attempts >= 3) break }
+        } catch { attempts++; if (attempts >= maxAttempts) break }
       }
 
       setState(prev => {
@@ -627,8 +676,6 @@ export default function ASMRGenerator() {
 
   useEffect(() => () => stopAll(), []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // iOS Safari requires AudioContext to be created/resumed synchronously
-  // within a user gesture. Unlock on first touch so async handleGenerate works.
   useEffect(() => {
     const unlock = () => {
       if (!ctxRef.current) ctxRef.current = new AudioContext()
@@ -755,7 +802,14 @@ function ConfirmView({
               <span className="text-white/35 text-xs mt-0.5 flex-shrink-0">{i + 1}.</span>
               <div className="flex flex-col gap-1">
                 {c.warning && <p className="text-xs text-amber-400/70 leading-relaxed">⚠ {c.warning}</p>}
-                <p className="text-sm text-white font-light">{c.displayLabel}</p>
+                <p className="text-sm text-white font-light">
+                  {c.displayLabel}
+                  {c.voiceConfig && (
+                    <span className="ml-2 text-[10px] text-white/30 font-normal">
+                      · {c.voiceConfig.accent} {c.voiceConfig.gender} · {c.voiceConfig.delivery}
+                    </span>
+                  )}
+                </p>
                 <p className="text-[10px] text-white/35 italic leading-relaxed">"{c.enhancedPrompt}"</p>
               </div>
             </div>
