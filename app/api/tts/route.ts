@@ -17,7 +17,6 @@ interface ELVoice {
 
 // ─── KEYWORD MAPS ────────────────────────────────────────────────────
 
-// Keywords we look for in voice name / description / labels to match accent
 const ACCENT_KEYWORDS: Record<string, string[]> = {
   british:    ['british', 'uk', 'english', 'england'],
   australian: ['australian', 'australia', 'aussie'],
@@ -25,23 +24,12 @@ const ACCENT_KEYWORDS: Record<string, string[]> = {
   american:   ['american', 'us ', 'usa', 'north american'],
 }
 
-// Keywords we require in name / description / labels.description to confirm delivery type
 const DELIVERY_KEYWORDS: Record<string, string[]> = {
   whisper: ['whisper', 'whispering', 'asmr', 'breathy', 'hushed'],
-  soft:    ['soft', 'calm', 'gentle', 'sooth', 'relax', 'mellow', 'quiet', 'peaceful'],
+  soft:    ['soft', 'calm', 'gentle', 'sooth', 'mellow', 'quiet', 'peaceful', 'relax'],
 }
 
-// Search terms sent to EL API — ordered most-specific to most-generic
-const DELIVERY_SEARCH_TERMS: Record<string, string[]> = {
-  whisper: ['whisper asmr', 'asmr whisper', 'whisper'],
-  soft:    ['soft calm', 'calm gentle', 'soft narrator', 'calm', 'soft'],
-}
-
-// ─── VOICE EXPLORER ──────────────────────────────────────────────────
-// 1. Fetch voices from EL shared library matching delivery keyword + gender
-// 2. Filter results: require BOTH accent AND delivery keywords present in
-//    the voice's name, free-text description, or structured labels
-// 3. Fall back progressively if no perfect match found
+// ─── VOICE SEARCH ────────────────────────────────────────────────────
 
 const voiceCache: Map<string, string[]> = new Map()
 
@@ -56,70 +44,63 @@ function matchesKeywords(voice: ELVoice, keywords: string[]): boolean {
   return keywords.some(kw => haystack.includes(kw))
 }
 
-async function findVoice(
-  apiKey: string,
-  gender: string,
-  accent: string,
-  delivery: string
-): Promise<string[]> {
+async function fetchVoices(apiKey: string, search: string, gender: string, pageSize = 20): Promise<ELVoice[]> {
+  try {
+    const url = new URL('https://api.elevenlabs.io/v1/shared-voices')
+    url.searchParams.set('search', search)
+    url.searchParams.set('gender', gender)
+    url.searchParams.set('page_size', String(pageSize))
+    url.searchParams.set('sort', 'trending')
+    const res = await fetch(url.toString(), { headers: { 'xi-api-key': apiKey } })
+    if (!res.ok) return []
+    const data = await res.json()
+    return data.voices ?? []
+  } catch { return [] }
+}
+
+async function findVoice(apiKey: string, gender: string, accent: string, delivery: string): Promise<string[]> {
   const cacheKey = `${gender}_${accent}_${delivery}`
   if (voiceCache.has(cacheKey)) return voiceCache.get(cacheKey)!
 
-  const searchTerms = DELIVERY_SEARCH_TERMS[delivery] ?? DELIVERY_SEARCH_TERMS['soft']
   const accentKws   = ACCENT_KEYWORDS[accent] ?? [accent]
   const deliveryKws = DELIVERY_KEYWORDS[delivery] ?? DELIVERY_KEYWORDS['soft']
 
-  let allVoices: ELVoice[] = []
-
-  // Fetch voices from EL — try each search term until we get results
-  for (const term of searchTerms) {
-    try {
-      const url = new URL('https://api.elevenlabs.io/v1/shared-voices')
-      url.searchParams.set('search', term)
-      url.searchParams.set('gender', gender)
-      url.searchParams.set('page_size', '50') // fetch enough to filter down
-      url.searchParams.set('sort', 'trending')
-
-      const res = await fetch(url.toString(), { headers: { 'xi-api-key': apiKey } })
-      if (!res.ok) continue
-
-      const data = await res.json()
-      if ((data.voices ?? []).length > 0) {
-        allVoices = data.voices
-        break
-      }
-    } catch { continue }
+  // ── Pass 1: combined search "british whisper" — EL's own search engine handles it ──
+  if (accent !== 'american') {
+    const combined = await fetchVoices(apiKey, `${accent} ${delivery}`, gender, 20)
+    const bothMatch = combined.filter(v => matchesKeywords(v, accentKws) && matchesKeywords(v, deliveryKws))
+    if (bothMatch.length > 0) {
+      const ids = bothMatch.slice(0, 5).map(v => v.voice_id)
+      voiceCache.set(cacheKey, ids); return ids
+    }
   }
 
-  if (allVoices.length === 0) {
-    // Hard fallback — known premade voices
-    const ids = buildFallback(gender, delivery)
-    voiceCache.set(cacheKey, ids)
-    return ids
+  // ── Pass 2: search delivery keyword + gender, filter results for accent ──
+  const deliveryTerms = delivery === 'whisper'
+    ? ['whisper asmr', 'asmr whisper', 'whisper']
+    : ['soft calm', 'calm gentle', 'soft narrator', 'soft']
+
+  for (const term of deliveryTerms) {
+    const voices = await fetchVoices(apiKey, term, gender, 50)
+    const accentMatch = voices.filter(v => matchesKeywords(v, accentKws))
+    if (accentMatch.length > 0) {
+      const ids = accentMatch.slice(0, 5).map(v => v.voice_id)
+      voiceCache.set(cacheKey, ids); return ids
+    }
+    // No accent match — save delivery-only results as a fallback
+    const deliveryMatch = voices.filter(v => matchesKeywords(v, deliveryKws))
+    if (deliveryMatch.length > 0) {
+      const ids = deliveryMatch.slice(0, 5).map(v => v.voice_id)
+      voiceCache.set(cacheKey, ids); return ids
+    }
   }
 
-  // Priority 1: voice matches BOTH accent AND delivery in name/description/labels
-  const bothMatch = allVoices.filter(v =>
-    matchesKeywords(v, accentKws) && matchesKeywords(v, deliveryKws)
-  )
-
-  // Priority 2: at least matches the delivery type
-  const deliveryMatch = allVoices.filter(v => matchesKeywords(v, deliveryKws))
-
-  // Priority 3: anything returned (already filtered by delivery search term + gender)
-  const pool = bothMatch.length > 0 ? bothMatch
-             : deliveryMatch.length > 0 ? deliveryMatch
-             : allVoices
-
-  const ids = pool.slice(0, 5).map(v => v.voice_id)
-  voiceCache.set(cacheKey, ids)
-  return ids
-}
-
-function buildFallback(gender: string, delivery: string): string[] {
-  if (delivery === 'whisper')
-    return gender === 'male' ? ['TxGEqnHWrfWFTfGW9XjX'] : ['EXAVITQu4vr4xnSDxMaL']
-  return gender === 'male' ? ['pNInz6obpgDQGcFmaJgB'] : ['21m00Tcm4TlvDq8ikWAM']
+  // ── Pass 3: hard fallback — at least gets the delivery right ──
+  const hardFallback = delivery === 'whisper'
+    ? (gender === 'male' ? ['TxGEqnHWrfWFTfGW9XjX'] : ['EXAVITQu4vr4xnSDxMaL'])
+    : (gender === 'male' ? ['pNInz6obpgDQGcFmaJgB'] : ['21m00Tcm4TlvDq8ikWAM'])
+  voiceCache.set(cacheKey, hardFallback)
+  return hardFallback
 }
 
 // ─── HANDLER ─────────────────────────────────────────────────────────
