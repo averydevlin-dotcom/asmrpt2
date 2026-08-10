@@ -2,30 +2,42 @@ import { NextRequest, NextResponse } from 'next/server'
 
 // Curated ElevenLabs voice roster
 // Update IDs from: elevenlabs.io/voice-library
-// Format: stability, similarity_boost, style, speed — tuned for calm ASMR delivery
-const VOICE_ROSTER: Record<string, { voiceId: string; stability: number; similarity_boost: number; style: number; speed: number }> = {
+//
+// Whisper tuning: stability must be very low (0.05–0.10) to get breathy delivery.
+// eleven_turbo_v2_5 handles nuanced whisper better than eleven_multilingual_v2.
+// Soft delivery uses eleven_multilingual_v2 for richer tone at normal stability.
+
+interface VoiceConfig {
+  voiceId: string
+  stability: number
+  similarity_boost: number
+  speed: number
+  model: string
+}
+
+const VOICE_ROSTER: Record<string, VoiceConfig> = {
   // American female
-  american_female_soft:    { voiceId: '21m00Tcm4TlvDq8ikWAM', stability: 0.55, similarity_boost: 0.80, style: 0.05, speed: 0.88 },
-  american_female_whisper: { voiceId: 'EXAVITQu4vr4xnSDxMaL', stability: 0.30, similarity_boost: 0.80, style: 0.02, speed: 0.82 },
+  american_female_soft:    { voiceId: '21m00Tcm4TlvDq8ikWAM', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
+  american_female_whisper: { voiceId: 'EXAVITQu4vr4xnSDxMaL', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
   // American male
-  american_male_soft:      { voiceId: 'pNInz6obpgDQGcFmaJgB', stability: 0.55, similarity_boost: 0.80, style: 0.05, speed: 0.88 },
-  american_male_whisper:   { voiceId: 'TxGEqnHWrfWFTfGW9XjX', stability: 0.30, similarity_boost: 0.80, style: 0.02, speed: 0.82 },
+  american_male_soft:      { voiceId: 'pNInz6obpgDQGcFmaJgB', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
+  american_male_whisper:   { voiceId: 'TxGEqnHWrfWFTfGW9XjX', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
   // British female
-  british_female_soft:     { voiceId: 'XB0fDUnXU5powFXDhCwa', stability: 0.55, similarity_boost: 0.80, style: 0.05, speed: 0.88 },
-  british_female_whisper:  { voiceId: 'XB0fDUnXU5powFXDhCwa', stability: 0.28, similarity_boost: 0.80, style: 0.02, speed: 0.82 },
+  british_female_soft:     { voiceId: 'XB0fDUnXU5powFXDhCwa', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
+  british_female_whisper:  { voiceId: 'XB0fDUnXU5powFXDhCwa', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
   // British male
-  british_male_soft:       { voiceId: 'JBFqnCBsd6RMkjVDRZzb', stability: 0.55, similarity_boost: 0.80, style: 0.05, speed: 0.88 },
-  british_male_whisper:    { voiceId: 'JBFqnCBsd6RMkjVDRZzb', stability: 0.28, similarity_boost: 0.80, style: 0.02, speed: 0.82 },
+  british_male_soft:       { voiceId: 'JBFqnCBsd6RMkjVDRZzb', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
+  british_male_whisper:    { voiceId: 'JBFqnCBsd6RMkjVDRZzb', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
   // Australian — swap in real AU voice IDs from ElevenLabs voice library for best results
-  australian_female_soft:    { voiceId: '21m00Tcm4TlvDq8ikWAM', stability: 0.55, similarity_boost: 0.80, style: 0.05, speed: 0.88 },
-  australian_female_whisper: { voiceId: 'EXAVITQu4vr4xnSDxMaL', stability: 0.30, similarity_boost: 0.80, style: 0.02, speed: 0.82 },
-  australian_male_soft:      { voiceId: 'pNInz6obpgDQGcFmaJgB', stability: 0.55, similarity_boost: 0.80, style: 0.05, speed: 0.88 },
-  australian_male_whisper:   { voiceId: 'TxGEqnHWrfWFTfGW9XjX', stability: 0.30, similarity_boost: 0.80, style: 0.02, speed: 0.82 },
+  australian_female_soft:    { voiceId: '21m00Tcm4TlvDq8ikWAM', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
+  australian_female_whisper: { voiceId: 'EXAVITQu4vr4xnSDxMaL', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
+  australian_male_soft:      { voiceId: 'pNInz6obpgDQGcFmaJgB', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
+  australian_male_whisper:   { voiceId: 'TxGEqnHWrfWFTfGW9XjX', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
   // Irish — swap in real Irish voice IDs for best results
-  irish_female_soft:    { voiceId: 'XB0fDUnXU5powFXDhCwa', stability: 0.55, similarity_boost: 0.80, style: 0.05, speed: 0.88 },
-  irish_female_whisper: { voiceId: 'XB0fDUnXU5powFXDhCwa', stability: 0.28, similarity_boost: 0.80, style: 0.02, speed: 0.82 },
-  irish_male_soft:      { voiceId: 'JBFqnCBsd6RMkjVDRZzb', stability: 0.55, similarity_boost: 0.80, style: 0.05, speed: 0.88 },
-  irish_male_whisper:   { voiceId: 'JBFqnCBsd6RMkjVDRZzb', stability: 0.28, similarity_boost: 0.80, style: 0.02, speed: 0.82 },
+  irish_female_soft:    { voiceId: 'XB0fDUnXU5powFXDhCwa', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
+  irish_female_whisper: { voiceId: 'XB0fDUnXU5powFXDhCwa', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
+  irish_male_soft:      { voiceId: 'JBFqnCBsd6RMkjVDRZzb', stability: 0.50, similarity_boost: 0.80, speed: 0.88, model: 'eleven_multilingual_v2' },
+  irish_male_whisper:   { voiceId: 'JBFqnCBsd6RMkjVDRZzb', stability: 0.07, similarity_boost: 0.85, speed: 0.78, model: 'eleven_turbo_v2_5' },
 }
 
 function pickVoice(accent: string, gender: string, delivery: string) {
@@ -49,14 +61,13 @@ export async function POST(req: NextRequest) {
       headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: script.trim(),
-        model_id: 'eleven_multilingual_v2',
+        model_id: voice.model,
         // speed is a top-level param, NOT inside voice_settings
         speed: voice.speed,
         voice_settings: {
           stability: voice.stability,
           similarity_boost: voice.similarity_boost,
           use_speaker_boost: false,
-          // style omitted — requires Creator plan; remove if causing 422
         },
       }),
     })
