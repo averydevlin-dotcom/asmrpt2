@@ -51,14 +51,18 @@ const ACCENT_MATCH: Record<string, string[]> = {
   american:   ['american'],
 }
 
+function wordMatch(text: string, keyword: string): boolean {
+  return new RegExp(`\\b${keyword}\\b`, 'i').test(text)
+}
+
 function accentScore(voice: ELVoice, accent: string): number {
   const keywords = ACCENT_MATCH[accent] ?? [accent]
   const label = (voice.labels?.accent ?? '').toLowerCase()
-  const name  = voice.name.toLowerCase()
-  const desc  = (voice.description ?? '').toLowerCase()
+  const name  = voice.name
+  const desc  = voice.description ?? ''
   if (keywords.some(k => label === k || label.includes(k))) return 3
-  if (keywords.some(k => name.includes(k))) return 2
-  if (keywords.some(k => desc.includes(k))) return 1
+  if (keywords.some(k => wordMatch(name, k))) return 2
+  if (keywords.some(k => wordMatch(desc, k))) return 1
   return 0
 }
 
