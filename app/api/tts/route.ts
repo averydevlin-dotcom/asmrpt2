@@ -15,9 +15,34 @@ interface ELVoice {
   }
 }
 
+// ─── PREMADE VOICE FALLBACK ───────────────────────────────────────────
+// ElevenLabs premade voices with known accent/gender.
+// Used when the Voice Library API is unavailable (401/403) or returns no matches.
+// With stability=0.07 and (whispering) performance cue, these sound convincingly whispered.
+
+const PREMADE_VOICES: Record<string, Record<string, string[]>> = {
+  female: {
+    british:    ['Xb7hH8MSUJpSbSDYk0k2', 'ThT5KcBeYPX3keUQqHPh', 'pFZP5JQG7iQjIQuC4Bku'], // Alice, Dorothy, Lily
+    american:   ['21m00Tcm4TlvDq8ikWAM', 'EXAVITQu4vr4xnSDxMaL', 'piTKgcLEGmPE4e6mEKli'], // Rachel, Sarah/Bella, Nicole
+    australian: ['oWAxZDx7w5VEj9dCyTzz'],  // Grace
+    irish:      ['21m00Tcm4TlvDq8ikWAM'],   // no native premade — fallback to Rachel
+  },
+  male: {
+    british:    ['onwK4e9ZLuTAKqWW03F9', 'CYw3kZ28kcKqmElbDkAk'],  // Daniel, Dave
+    american:   ['TxGEqnHWrfWFTfGW9XjX', 'pNInz6obpgDQGcFmaJgB'], // Josh, Adam
+    australian: ['ZQe5CZNOzWyzPSCn5a3c'],  // James
+    irish:      ['D38z5RcWu1voky8WS1ja'],   // Fin
+  },
+}
+
+function getPremadeVoice(gender: string, accent: string): string {
+  const pool = PREMADE_VOICES[gender]?.[accent]
+    ?? PREMADE_VOICES[gender]?.['american']
+    ?? ['21m00Tcm4TlvDq8ikWAM']
+  return pool[Math.floor(Math.random() * pool.length)]
+}
+
 // ─── ACCENT MATCHING ─────────────────────────────────────────────────
-// NOTE: 'english' removed from british — it matches American English voices too.
-// Only use exact accent identifiers from EL's labels.
 
 const ACCENT_MATCH: Record<string, string[]> = {
   british:    ['british', 'uk'],
@@ -31,11 +56,8 @@ function accentScore(voice: ELVoice, accent: string): number {
   const label = (voice.labels?.accent ?? '').toLowerCase()
   const name  = voice.name.toLowerCase()
   const desc  = (voice.description ?? '').toLowerCase()
-  // labels.accent exact/partial match is best
   if (keywords.some(k => label === k || label.includes(k))) return 3
-  // voice name contains accent keyword
   if (keywords.some(k => name.includes(k))) return 2
-  // description mentions accent
   if (keywords.some(k => desc.includes(k))) return 1
   return 0
 }
@@ -45,15 +67,17 @@ function accentScore(voice: ELVoice, accent: string): number {
 const voiceCache: Map<string, string[]> = new Map()
 
 // ─── VOICE FINDER ────────────────────────────────────────────────────
+// 1. Try EL shared voice library (requires Voice Library API access)
+// 2. If 401/403 or no accent matches → fall back to curated premade voices
 
 async function findVoice(
   apiKey: string,
   gender: string,
   accent: string,
   delivery: string
-): Promise<{ ids: string[]; debug: object[] }> {
+): Promise<string[]> {
   const cacheKey = `${gender}_${accent}_${delivery}`
-  if (voiceCache.has(cacheKey)) return { ids: voiceCache.get(cacheKey)!, debug: [] }
+  if (voiceCache.has(cacheKey)) return voiceCache.get(cacheKey)!
 
   const searchTerm = delivery === 'whisper' ? 'whisper' : 'soft'
 
@@ -65,6 +89,16 @@ async function findVoice(
     url.searchParams.set('sort', 'trending')
 
     const res = await fetch(url.toString(), { headers: { 'xi-api-key': apiKey } })
+
+    // 401/403 = Voice Library not enabled for this API key → use premade voices
+    if (res.status === 401 || res.status === 403) {
+      console.log(`[tts] Voice Library API returned ${res.status} — using premade voice fallback`)
+      const id = getPremadeVoice(gender, accent)
+      console.log(`[tts] premade fallback: gender=${gender} accent=${accent} → voice=${id}`)
+      voiceCache.set(cacheKey, [id])
+      return [id]
+    }
+
     if (!res.ok) throw new Error(`EL voices API: ${res.status}`)
 
     const data = await res.json()
@@ -72,26 +106,14 @@ async function findVoice(
 
     if (voices.length === 0) throw new Error('No voices returned')
 
-    // Score and sort
     const scored = voices
       .map(v => ({ v, score: accentScore(v, accent) }))
       .sort((a, b) => b.score - a.score)
 
-    // Log top 10 for debugging
-    const debugInfo = scored.slice(0, 10).map(x => ({
-      name: x.v.name,
-      id: x.v.voice_id,
-      score: x.score,
-      accent_label: x.v.labels?.accent ?? 'none',
-      gender_label: x.v.labels?.gender ?? 'none',
-    }))
-    console.log(`[tts] findVoice: search="${searchTerm}" gender=${gender} accent=${accent}`)
-    console.log(`[tts] top10:`, JSON.stringify(debugInfo))
-
-    // If no accent matches at all (all score 0), do a second pass with accent in search
+    // If no accent matches, try second search with accent term included
     let top5 = scored.filter(x => x.score > 0).slice(0, 5)
     if (top5.length === 0) {
-      console.log(`[tts] no accent matches in first search, trying "${accent} ${searchTerm}"`)
+      console.log(`[tts] no accent matches — retrying with "${accent} ${searchTerm}"`)
       const url2 = new URL('https://api.elevenlabs.io/v1/shared-voices')
       url2.searchParams.set('search', `${accent} ${searchTerm}`)
       url2.searchParams.set('gender', gender)
@@ -100,30 +122,31 @@ async function findVoice(
       const res2 = await fetch(url2.toString(), { headers: { 'xi-api-key': apiKey } })
       if (res2.ok) {
         const data2 = await res2.json()
-        const voices2: ELVoice[] = data2.voices ?? []
-        const scored2 = voices2
-          .map(v => ({ v, score: accentScore(v, accent) }))
-          .sort((a, b) => b.score - a.score)
-        console.log(`[tts] second search top5:`, JSON.stringify(scored2.slice(0, 5).map(x => ({ name: x.v.name, score: x.score, accent_label: x.v.labels?.accent }))))
+        const scored2 = (data2.voices ?? [])
+          .map((v: ELVoice) => ({ v, score: accentScore(v, accent) }))
+          .sort((a: {score: number}, b: {score: number}) => b.score - a.score)
         top5 = scored2.slice(0, 5)
       }
     }
 
-    // If still nothing, fall back to top 5 from original search
+    // Still nothing → premade fallback
     if (top5.length === 0) {
-      top5 = scored.slice(0, 5)
+      console.log(`[tts] no accent matches after both searches — using premade fallback`)
+      const id = getPremadeVoice(gender, accent)
+      voiceCache.set(cacheKey, [id])
+      return [id]
     }
 
     const ids = top5.map(x => x.v.voice_id)
+    console.log(`[tts] found ${ids.length} voice(s) from library: ${top5.map(x => x.v.name).join(', ')}`)
     voiceCache.set(cacheKey, ids)
-    return { ids, debug: debugInfo }
+    return ids
   } catch (e) {
     console.error('[tts] findVoice error:', e)
-    const fallback = delivery === 'whisper'
-      ? (gender === 'male' ? ['TxGEqnHWrfWFTfGW9XjX'] : ['EXAVITQu4vr4xnSDxMaL'])
-      : (gender === 'male' ? ['pNInz6obpgDQGcFmaJgB'] : ['21m00Tcm4TlvDq8ikWAM'])
-    voiceCache.set(cacheKey, fallback)
-    return { ids: fallback, debug: [] }
+    const id = getPremadeVoice(gender, accent)
+    console.log(`[tts] error fallback: gender=${gender} accent=${accent} → voice=${id}`)
+    voiceCache.set(cacheKey, [id])
+    return [id]
   }
 }
 
@@ -138,9 +161,9 @@ export async function POST(req: NextRequest) {
     const apiKey = process.env.ELEVENLABS_API_KEY
     if (!apiKey) return NextResponse.json({ error: 'ELEVENLABS_API_KEY not configured' }, { status: 500 })
 
-    const { ids } = await findVoice(apiKey, gender, accent, delivery)
+    const ids = await findVoice(apiKey, gender, accent, delivery)
     const voiceId = ids[Math.floor(Math.random() * ids.length)]
-    console.log(`[tts] selected voiceId=${voiceId} from pool of ${ids.length}`)
+    console.log(`[tts] using voiceId=${voiceId}`)
 
     const isWhisper = delivery === 'whisper'
     const stability = isWhisper ? 0.07 : 0.50
@@ -164,7 +187,7 @@ export async function POST(req: NextRequest) {
 
     if (!response.ok) {
       const err = await response.text()
-      console.error(`[tts] TTS call failed: ${response.status}`, err)
+      console.error(`[tts] TTS call failed ${response.status}:`, err)
       return NextResponse.json({ error: err || `HTTP ${response.status}` }, { status: response.status })
     }
 
