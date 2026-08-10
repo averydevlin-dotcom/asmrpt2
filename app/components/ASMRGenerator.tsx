@@ -316,10 +316,7 @@ const NON_ASMR: { patterns: RegExp[]; warning: string; fallbackIdx: number }[] =
     warning: "Spoken voice isn't supported. Using breathing instead.", fallbackIdx: 19 },
 ]
 
-// ─── VOICE CUE DETECTION ─────────────────────────────────────────────
-// Only triggered when user explicitly requests a voice/accent/whispering
-
-const VOICE_CUE_RE = /\b(british|australian|irish|american\s+accent|whisper\w*|female\s+voice|male\s+voice|wom[ae]n['s]*\s+voice|man['s]*\s+voice|soft\s+voice|gentle\s+voice|a\s+(female|male|woman|man)\s+(whispering|voice)|narrator\w*)\b/i
+// (voice cue detection moved to /api/pipeline — always runs with defaults)
 
 // ─── SCENE EXTRACTION ────────────────────────────────────────────────
 
@@ -502,76 +499,75 @@ export default function ASMRGenerator() {
 
     const BASE_NEG_LOCAL = 'no music, no singing, no voice, no speech, no percussion, no sudden loud sounds, no reverb tail, no distortion, isolated ambient texture only'
 
-    // Try regex database first
-    let components = extractSceneComponents(raw)
+    let components: SoundComponent[] = []
 
-    // Nothing matched — ask Claude Haiku to decompose the scene
-    if (components.length === 0) {
-      try {
-        const res = await fetch('/api/enhance', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ input: raw }),
-        })
-        if (res.ok) {
-          const { components: enhanced } = await res.json()
-          components = (enhanced as { label: string; prompt: string }[]).map(e => ({
+    try {
+      // Single pipeline call: strips voice cues, decomposes ambient sounds,
+      // detects accent/gender/delivery (defaults: american/female/whisper),
+      // then writes a voice script specifically about those sounds.
+      const res = await fetch('/api/pipeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input: raw }),
+      })
+
+      if (res.ok) {
+        const { voice, sounds, ambientDesc } = await res.json()
+
+        // Build ambient sound components from pipeline decomposition
+        let soundComps: SoundComponent[] = (sounds as { label: string; prompt: string }[]).map(s => ({
+          id: Math.random().toString(36).slice(2, 8),
+          originalText: s.label,
+          enhancedPrompt: `${s.prompt}, ${BASE_NEG_LOCAL}`,
+          displayLabel: s.label,
+          status: 'pending' as const,
+          volume: 70,
+        }))
+
+        // Fallback: if pipeline returned no sounds, try local regex on stripped desc
+        if (soundComps.length === 0) {
+          soundComps = extractSceneComponents(ambientDesc || raw)
+        }
+
+        // Voice component — always present, voice/accent/delivery filled in by pipeline
+        if (voice?.script) {
+          const voiceComp: SoundComponent = {
             id: Math.random().toString(36).slice(2, 8),
-            originalText: raw.trim(),
-            enhancedPrompt: `${e.prompt}, ${BASE_NEG_LOCAL}`,
-            displayLabel: e.label,
-            status: 'pending' as const,
-            volume: 70,
-          }))
-        }
-      } catch (e) {
-        console.error('enhance failed:', e)
-      }
-    }
-
-    // Final fallback if everything failed
-    if (components.length === 0) {
-      const t = raw.trim()
-      components = [{
-        id: Math.random().toString(36).slice(2, 8),
-        originalText: t,
-        enhancedPrompt: `${t} sounds, soft gentle ${t} ASMR texture, slow calming ${t}, quiet and soothing ambient, ${BASE_NEG_LOCAL}`,
-        displayLabel: t,
-        status: 'pending' as const,
-        volume: 70,
-      }]
-    }
-
-    // Voice detection — only added if user explicitly requests a voice/accent/whispering
-    if (VOICE_CUE_RE.test(raw)) {
-      try {
-        const vRes = await fetch('/api/voice-script', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ input: raw }),
-        })
-        if (vRes.ok) {
-          const { script, accent, gender, delivery, label } = await vRes.json()
-          if (script) {
-            const voiceComp: SoundComponent = {
-              id: Math.random().toString(36).slice(2, 8),
-              originalText: raw,
-              enhancedPrompt: script,
-              displayLabel: label ?? 'Narrator',
-              status: 'pending',
-              volume: 85,
-              voiceConfig: {
-                accent: accent ?? 'american',
-                gender: gender ?? 'female',
-                delivery: delivery ?? 'soft',
-                script,
-              },
-            }
-            components = [voiceComp, ...components].slice(0, 4)
+            originalText: raw,
+            enhancedPrompt: voice.script,
+            displayLabel: voice.label ?? 'Narrator',
+            status: 'pending',
+            volume: 80,
+            voiceConfig: {
+              accent: voice.accent ?? 'american',
+              gender: voice.gender ?? 'female',
+              delivery: voice.delivery ?? 'whisper',
+              script: voice.script,
+            },
           }
+          // Voice is always first track; ambient sounds follow
+          components = [voiceComp, ...soundComps].slice(0, 4)
+        } else {
+          components = soundComps
         }
-      } catch (e) {
-        console.error('voice detection failed:', e)
+      }
+    } catch (e) {
+      console.error('pipeline failed:', e)
+    }
+
+    // Emergency fallback if pipeline completely failed
+    if (components.length === 0) {
+      components = extractSceneComponents(raw)
+      if (components.length === 0) {
+        const t = raw.trim()
+        components = [{
+          id: Math.random().toString(36).slice(2, 8),
+          originalText: t,
+          enhancedPrompt: `${t} sounds, soft gentle ASMR texture, quiet and soothing ambient, ${BASE_NEG_LOCAL}`,
+          displayLabel: t,
+          status: 'pending' as const,
+          volume: 70,
+        }]
       }
     }
 
