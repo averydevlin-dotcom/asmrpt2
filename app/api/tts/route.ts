@@ -1,173 +1,85 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-// ─── TYPES ───────────────────────────────────────────────────────────
+// ─── CURATED VOICE BANK ───────────────────────────────────────────────
+// Hand-picked ElevenLabs built-in voices selected for ASMR quality.
+// To add/remove voices: find voice IDs at elevenlabs.io/voice-library
+// then update this list. The generator picks randomly from the matching pool.
+// Each entry: { id: EL voice_id, name: display name }
 
-interface ELVoice {
-  voice_id: string
-  name: string
-  description?: string
-  labels?: {
-    accent?: string
-    description?: string
-    gender?: string
-    age?: string
-    'use case'?: string
-  }
-}
+interface VoiceEntry { id: string; name: string }
 
-// ─── PREMADE VOICE FALLBACK ───────────────────────────────────────────
-// ElevenLabs premade voices with known accent/gender.
-// Used when the Voice Library API is unavailable (401/403) or returns no matches.
-// With stability=0.07 and (whispering) performance cue, these sound convincingly whispered.
-
-const PREMADE_VOICES: Record<string, Record<string, string[]>> = {
+const VOICE_BANK: Record<string, Record<string, VoiceEntry[]>> = {
   female: {
-    british:    ['Xb7hH8MSUJpSbSDYk0k2', 'ThT5KcBeYPX3keUQqHPh', 'pFZP5JQG7iQjIQuC4Bku'], // Alice, Dorothy, Lily
-    american:   ['21m00Tcm4TlvDq8ikWAM', 'EXAVITQu4vr4xnSDxMaL', 'piTKgcLEGmPE4e6mEKli'], // Rachel, Sarah/Bella, Nicole
-    australian: ['oWAxZDx7w5VEj9dCyTzz'],  // Grace
-    irish:      ['21m00Tcm4TlvDq8ikWAM'],   // no native premade — fallback to Rachel
+    british: [
+      { id: 'Xb7hH8MSUJpSbSDYk0k2', name: 'Alice' },    // calm, elegant
+      { id: 'ThT5KcBeYPX3keUQqHPh', name: 'Dorothy' },   // warm, gentle
+      { id: 'pFZP5JQG7iQjIQuC4Bku', name: 'Lily' },      // soft, intimate
+    ],
+    american: [
+      { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel' },    // calm, clear
+      { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Sarah' },     // warm, breathy
+      { id: 'piTKgcLEGmPE4e6mEKli', name: 'Nicole' },    // natural whisper
+    ],
+    australian: [
+      { id: 'oWAxZDx7w5VEj9dCyTzz', name: 'Grace' },
+    ],
+    irish: [
+      { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel' },    // no native premade — use Rachel
+    ],
   },
   male: {
-    british:    ['onwK4e9ZLuTAKqWW03F9', 'CYw3kZ28kcKqmElbDkAk'],  // Daniel, Dave
-    american:   ['TxGEqnHWrfWFTfGW9XjX', 'pNInz6obpgDQGcFmaJgB'], // Josh, Adam
-    australian: ['ZQe5CZNOzWyzPSCn5a3c'],  // James
-    irish:      ['D38z5RcWu1voky8WS1ja'],   // Fin
+    british: [
+      { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel' },    // deep, calm
+      { id: 'CYw3kZ28kcKqmElbDkAk', name: 'Dave' },      // warm, conversational
+    ],
+    american: [
+      { id: 'TxGEqnHWrfWFTfGW9XjX', name: 'Josh' },      // deep, clear
+      { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam' },      // calm, neutral
+    ],
+    australian: [
+      { id: 'ZQe5CZNOzWyzPSCn5a3c', name: 'James' },
+    ],
+    irish: [
+      { id: 'D38z5RcWu1voky8WS1ja', name: 'Fin' },
+    ],
   },
 }
 
-function getPremadeVoice(gender: string, accent: string): string {
-  const pool = PREMADE_VOICES[gender]?.[accent]
-    ?? PREMADE_VOICES[gender]?.['american']
-    ?? ['21m00Tcm4TlvDq8ikWAM']
-  return pool[Math.floor(Math.random() * pool.length)]
+function pickFromBank(gender: string, accent: string): string {
+  const pool =
+    VOICE_BANK[gender]?.[accent] ??
+    VOICE_BANK[gender]?.['american'] ??
+    VOICE_BANK['female']?.['american'] ??
+    []
+  if (pool.length === 0) return '21m00Tcm4TlvDq8ikWAM'  // Rachel — last resort
+  const entry = pool[Math.floor(Math.random() * pool.length)]
+  console.log(`[tts] voice bank → ${entry.name} (${entry.id}) [${gender}/${accent}]`)
+  return entry.id
 }
 
-// ─── ACCENT MATCHING ─────────────────────────────────────────────────
-
-const ACCENT_MATCH: Record<string, string[]> = {
-  british:    ['british', 'uk'],
-  australian: ['australian', 'aussie'],
-  irish:      ['irish'],
-  american:   ['american'],
-}
-
-function wordMatch(text: string, keyword: string): boolean {
-  return new RegExp(`\\b${keyword}\\b`, 'i').test(text)
-}
-
-function accentScore(voice: ELVoice, accent: string): number {
-  const keywords = ACCENT_MATCH[accent] ?? [accent]
-  const label = (voice.labels?.accent ?? '').toLowerCase()
-  const name  = voice.name
-  const desc  = voice.description ?? ''
-  if (keywords.some(k => label === k || label.includes(k))) return 3
-  if (keywords.some(k => wordMatch(name, k))) return 2
-  if (keywords.some(k => wordMatch(desc, k))) return 1
-  return 0
-}
-
-// ─── VOICE CACHE ─────────────────────────────────────────────────────
-
-const voiceCache: Map<string, string[]> = new Map()
-
-// ─── VOICE FINDER ────────────────────────────────────────────────────
-// 1. Try EL shared voice library (requires Voice Library API access)
-// 2. If 401/403 or no accent matches → fall back to curated premade voices
-
-async function findVoice(
-  apiKey: string,
-  gender: string,
-  accent: string,
-  delivery: string
-): Promise<string[]> {
-  const cacheKey = `${gender}_${accent}_${delivery}`
-  if (voiceCache.has(cacheKey)) return voiceCache.get(cacheKey)!
-
-  const searchTerm = delivery === 'whisper' ? 'whisper' : 'soft'
-
-  try {
-    const url = new URL('https://api.elevenlabs.io/v1/shared-voices')
-    url.searchParams.set('search', searchTerm)
-    url.searchParams.set('gender', gender)
-    url.searchParams.set('page_size', '100')
-    url.searchParams.set('sort', 'trending')
-
-    const res = await fetch(url.toString(), { headers: { 'xi-api-key': apiKey } })
-
-    // 401/403 = Voice Library not enabled for this API key → use premade voices
-    if (res.status === 401 || res.status === 403) {
-      console.log(`[tts] Voice Library API returned ${res.status} — using premade voice fallback`)
-      const id = getPremadeVoice(gender, accent)
-      console.log(`[tts] premade fallback: gender=${gender} accent=${accent} → voice=${id}`)
-      voiceCache.set(cacheKey, [id])
-      return [id]
-    }
-
-    if (!res.ok) throw new Error(`EL voices API: ${res.status}`)
-
-    const data = await res.json()
-    const voices: ELVoice[] = data.voices ?? []
-
-    if (voices.length === 0) throw new Error('No voices returned')
-
-    const scored = voices
-      .map(v => ({ v, score: accentScore(v, accent) }))
-      .sort((a, b) => b.score - a.score)
-
-    // If no accent matches, try second search with accent term included
-    let top5 = scored.filter(x => x.score > 0).slice(0, 5)
-    if (top5.length === 0) {
-      console.log(`[tts] no accent matches — retrying with "${accent} ${searchTerm}"`)
-      const url2 = new URL('https://api.elevenlabs.io/v1/shared-voices')
-      url2.searchParams.set('search', `${accent} ${searchTerm}`)
-      url2.searchParams.set('gender', gender)
-      url2.searchParams.set('page_size', '50')
-      url2.searchParams.set('sort', 'trending')
-      const res2 = await fetch(url2.toString(), { headers: { 'xi-api-key': apiKey } })
-      if (res2.ok) {
-        const data2 = await res2.json()
-        const scored2 = (data2.voices ?? [])
-          .map((v: ELVoice) => ({ v, score: accentScore(v, accent) }))
-          .sort((a: {score: number}, b: {score: number}) => b.score - a.score)
-        top5 = scored2.slice(0, 5)
-      }
-    }
-
-    // Still nothing → premade fallback
-    if (top5.length === 0) {
-      console.log(`[tts] no accent matches after both searches — using premade fallback`)
-      const id = getPremadeVoice(gender, accent)
-      voiceCache.set(cacheKey, [id])
-      return [id]
-    }
-
-    const ids = top5.map(x => x.v.voice_id)
-    console.log(`[tts] found ${ids.length} voice(s) from library: ${top5.map(x => x.v.name).join(', ')}`)
-    voiceCache.set(cacheKey, ids)
-    return ids
-  } catch (e) {
-    console.error('[tts] findVoice error:', e)
-    const id = getPremadeVoice(gender, accent)
-    console.log(`[tts] error fallback: gender=${gender} accent=${accent} → voice=${id}`)
-    voiceCache.set(cacheKey, [id])
-    return [id]
-  }
-}
+// (Shared voice library search removed — voice bank is now the primary selection)
 
 // ─── HANDLER ─────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
-    const { script, accent = 'american', gender = 'female', delivery = 'whisper' } = await req.json()
+    const {
+      script,
+      accent   = 'american',
+      gender   = 'female',
+      delivery = 'whisper',
+      voiceId: voiceIdOverride,   // optional: audition page passes a specific ID
+    } = await req.json()
 
     if (!script?.trim()) return NextResponse.json({ error: 'No script' }, { status: 400 })
 
     const apiKey = process.env.ELEVENLABS_API_KEY
     if (!apiKey) return NextResponse.json({ error: 'ELEVENLABS_API_KEY not configured' }, { status: 500 })
 
-    const ids = await findVoice(apiKey, gender, accent, delivery)
-    const voiceId = ids[Math.floor(Math.random() * ids.length)]
-    console.log(`[tts] using voiceId=${voiceId}`)
+    // Audition mode: caller passed a specific voice ID to test
+    // Normal mode: pick randomly from the curated voice bank
+    const voiceId = voiceIdOverride ?? pickFromBank(gender, accent)
+    console.log(`[tts] using voiceId=${voiceId}${voiceIdOverride ? ' (override)' : ''}`)
 
     const isWhisper = delivery === 'whisper'
     const stability = isWhisper ? 0.07 : 0.50
