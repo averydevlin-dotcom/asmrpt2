@@ -75,15 +75,25 @@ First, classify the playback MODE:
 Then identify sounds based on the mode:
 
 For LAYER mode: 1–3 simultaneous ambient textures that together paint the atmosphere.
-For SEQUENCE mode: 2–4 sounds that together tell the story.
-  - Classify each sound as either:
-    - "background": true — atmospheric/ambient sounds that loop continuously under the scene (candlelight, rain, fireplace crackle, fan hum, distant café noise). These play the whole time.
-    - "background": false — action sounds that form the sequence chain. These play one after another.
-  - For action sounds (background:false), set "frequency" to one of three values:
-    - "continuous" — the main repeating action that defines the activity (brush strokes on canvas, pen writing, footsteps, pouring tea). Plays every loop.
-    - "occasional" — happens naturally every few repetitions (brush dipping in water between strokes, stirring, page adjusting). Plays every ~4 loops.
-    - "setup" — a preparatory action that only happens at the start or very rarely (pouring water into the glass before painting, uncapping the pen, pulling out a sheet of paper, sitting down). Plays once at the very beginning, then once every ~12 loops.
-  - Order sounds naturally: setup actions first, then continuous/occasional interleaved.
+
+For SEQUENCE mode:
+  STEP 1 — Add a background ambient (background:true) that fits the location and sets the scene atmosphere. This always plays underneath everything:
+    - Beach/sand/ocean → soft distant waves lapping
+    - Forest/nature → gentle wind through leaves, distant birdsong
+    - Indoors cozy → room tone, fireplace crackle, or rain on window
+    - Cafe/library → soft distant murmur, HVAC hum
+    - Night → quiet crickets, distant wind
+    If no natural ambient fits, use a soft room-tone presence sound.
+
+  STEP 2 — Pick 1–2 action sounds (background:false) that form the sequence. Keep it minimal.
+    CRITICAL RULES for action sounds:
+    - There must be exactly ONE "continuous" sound — the single defining physical action (footsteps in sand, brush on canvas, pen on paper). Only one.
+    - Do NOT create multiple sounds that are textural variations of the same thing. "Footsteps in sand," "sand shifting underfoot," and "sand crunching" are all the same action — pick only ONE.
+    - "occasional" sounds should be a genuinely distinct secondary event (brush dipping in water, turning a page, pausing to breathe). Not another version of the main action.
+    - "setup" sounds are one-time preparatory actions (sitting down, uncapping a pen, pulling out a sheet of paper).
+    - Frequency: "continuous" plays every loop, "occasional" every ~4 loops, "setup" once at start then every ~12 loops.
+
+  Order: setup first, then continuous and occasional interleaved.
 
 Rules for all sounds:
 - Describe each sound as a close-up audible texture or action
@@ -96,8 +106,15 @@ Respond with ONLY valid JSON, no other text:
 Layer example:
 {"mode":"layer","sounds":[{"label":"Rain on window","prompt":"soft rain pattering gently on glass, quiet close-up texture, no thunder, no music, no voice, no speech","background":false,"frequency":"continuous"}]}
 
+Sequence example (walking slowly on a beach in dry sand):
+{"mode":"sequence","sounds":[
+  {"label":"Distant ocean waves","prompt":"soft ocean waves rolling gently onto shore, distant and soothing, no music, no voice, no speech","background":true,"frequency":"continuous"},
+  {"label":"Footsteps in dry sand","prompt":"slow deliberate footsteps pressing softly into dry beach sand, each step quiet and close-up, no music, no voice, no speech","background":false,"frequency":"continuous"}
+]}
+
 Sequence example (watercolor painting):
 {"mode":"sequence","sounds":[
+  {"label":"Soft room ambience","prompt":"quiet indoor presence, faint natural room tone, gentle stillness, no music, no voice, no speech","background":true,"frequency":"continuous"},
   {"label":"Pouring water","prompt":"water pouring gently into a small glass jar, soft trickle, no music, no voice, no speech","background":false,"frequency":"setup"},
   {"label":"Brush stroke on canvas","prompt":"soft wet paintbrush strokes across watercolor paper, gentle scratching, no music, no voice, no speech","background":false,"frequency":"continuous"},
   {"label":"Brush dip in water","prompt":"wet paintbrush swirling briefly in water jar, soft swish, no music, no voice, no speech","background":false,"frequency":"occasional"}
