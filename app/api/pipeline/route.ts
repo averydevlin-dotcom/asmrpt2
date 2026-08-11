@@ -62,6 +62,44 @@ function stripVoiceCues(input: string): string {
     .trim()
 }
 
+// ─── EXPLICIT TOPIC EXTRACTION ───────────────────────────────────────
+// Detects when the user specified *what* the voice should talk about,
+// as opposed to just setting a scene or voice type.
+// e.g. "man whispering about how amazing I am" → "how amazing I am"
+//      "someone telling me a story about dragons" → "a story about dragons"
+
+function extractExplicitTopic(input: string): string | null {
+  // "about X" pattern — most common
+  const about = input.match(/\babout\s+([^.]{5,120}?)(?:\.|$)/i)
+  if (about) return about[1].trim()
+  // "telling me / tell me X"
+  const tell = input.match(/\btell(?:ing)?\s+me\s+([^.]{5,120}?)(?:\.|$)/i)
+  if (tell) return tell[1].trim()
+  // "saying / say X"
+  const say = input.match(/\bsay(?:ing)?\s+([^.]{5,120}?)(?:\.|$)/i)
+  if (say) return say[1].trim()
+  // "whispering that X"
+  const that = input.match(/\bwhisper(?:ing)?\s+that\s+([^.]{5,120}?)(?:\.|$)/i)
+  if (that) return that[1].trim()
+  return null
+}
+
+// ─── VOICE-ONLY DETECTION ────────────────────────────────────────────
+// Returns true when the request is purely a voice with no real scene —
+// either because the user gave an explicit script topic (no sounds needed)
+// or because the stripped description is too sparse to be a scene.
+
+const SCENE_WORDS = /\b(forest|woods|ocean|beach|rain|fire|fireplace|caf[eé]|library|park|garden|stream|river|mountain|field|meadow|city|street|kitchen|bedroom|studio|office|nature|water|wind|leaves|sand|snow|night|morning|evening|outside|candle)\b/i
+const ACTIVITY_WORDS = /\b(painting|walking|writing|reading|cooking|eating|drinking|drawing|knitting|folding|brushing|typing|studying|working|gardening|hiking|swimming|journaling)\b/i
+
+function isVoiceOnly(ambientDesc: string, explicitTopic: string | null): boolean {
+  if (explicitTopic) return true              // explicit topic = voice script, no sounds
+  if (!ambientDesc || ambientDesc.length < 6) return true  // nothing left after stripping
+  if (SCENE_WORDS.test(ambientDesc) || ACTIVITY_WORDS.test(ambientDesc)) return false
+  // Short pronoun/preposition fragments like "to me", "for me" — not a real scene
+  return ambientDesc.trim().split(/\s+/).length < 3
+}
+
 // ─── SOUND DECOMPOSER ────────────────────────────────────────────────
 // Haiku classifies the scene as layer (simultaneous ambient) or sequence
 // (ordered actions that tell a story), then decomposes accordingly.
@@ -151,20 +189,35 @@ async function decomposeSounds(scene: string): Promise<{
 
 // ─── VOICE SCRIPT WRITER ─────────────────────────────────────────────
 
-function buildScriptSystem(delivery: 'whisper' | 'soft', mode: 'layer' | 'sequence'): string {
+function buildScriptSystem(
+  delivery: 'whisper' | 'soft',
+  explicitTopic: string | null,
+  sceneContext: string,
+): string {
   const cue = delivery === 'whisper' ? '(whispering)' : '(softly)'
-  const context = mode === 'sequence'
-    ? 'You will receive a list of sounds in a sequence — they play one after another.'
-    : 'You will receive a list of ambient sounds that play simultaneously.'
+
+  let contentGuidance: string
+  if (explicitTopic) {
+    // User told us exactly what to talk about — do that, directly and genuinely.
+    contentGuidance = `The listener has asked the narrator to speak about: "${explicitTopic}".
+Write a script that is genuinely and directly about this topic. If they asked for compliments or affirmations, give real warm compliments. If they asked for a story, start the story. Speak directly to the listener as "you." Do NOT narrate or describe the narrator's voice or the act of whispering.`
+  } else if (sceneContext) {
+    // Scene exists — write something a real person would say in that setting.
+    contentGuidance = `The setting is: ${sceneContext}.
+Write something a person would naturally say or think in this place. Do NOT describe the act of whispering or narrate it — speak as someone actually present in the scene. Evoke the mood, sensation, and details of that specific environment. Speak directly to the listener as "you."`
+  } else {
+    // Pure voice request with no scene or topic — write gentle comfort/affirmations.
+    contentGuidance = `Write gentle affirmations and soft reassurance — something calming and warm. Speak directly to the listener as "you," as if sitting close beside them.`
+  }
+
   return `You write intimate ASMR narration scripts.
-${context} Write a short narration that fits the overall scene.
+${contentGuidance}
 
 Rules:
 - Begin with the exact text "${cue}" — required performance cue, do not skip
 - 40-55 words after the cue
 - Second-person present tense: "You settle in...", "Feel the warmth..."
 - Short phrases separated by ellipses (...)
-- Reference the specific sounds naturally
 - Sensory language: texture, temperature, sound, breath, weight
 - No exclamation marks
 - No quotes around the output
@@ -172,12 +225,18 @@ Rules:
 Respond with ONLY the script text.`
 }
 
-async function writeScript(soundLabels: string, delivery: 'whisper' | 'soft', mode: 'layer' | 'sequence'): Promise<string> {
+async function writeScript(
+  delivery: 'whisper' | 'soft',
+  explicitTopic: string | null,
+  sceneContext: string,
+  soundLabels: string,
+): Promise<string> {
+  const userMsg = soundLabels ? `Background sounds: ${soundLabels}` : 'No background sounds.'
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 200,
-    system: buildScriptSystem(delivery, mode),
-    messages: [{ role: 'user', content: `Sounds: ${soundLabels}` }],
+    system: buildScriptSystem(delivery, explicitTopic, sceneContext),
+    messages: [{ role: 'user', content: userMsg }],
   })
   return msg.content[0].type === 'text' ? msg.content[0].text.trim() : ''
 }
@@ -198,30 +257,45 @@ export async function POST(req: Request) {
     const accent   = wantsVoice ? detectAccent(input)   : 'american'
     const label    = buildLabel(accent, gender, delivery)
 
-    // 3. Strip voice cues → ambient scene description
-    const ambientDesc = stripVoiceCues(input) || input.trim()
+    // 3. Extract explicit script topic BEFORE stripping voice cues
+    //    e.g. "about how amazing I am", "tell me a story about dragons"
+    const explicitTopic = wantsVoice ? extractExplicitTopic(input) : null
 
-    // 4. Decompose into sounds + detect mode (layer vs sequence)
+    // 4. Strip voice cues → ambient scene description
+    const ambientDesc = stripVoiceCues(input) || ''
+
+    // 5. Determine if this is a voice-only request (no sounds needed)
+    const voiceOnly = wantsVoice && isVoiceOnly(ambientDesc, explicitTopic)
+
+    // 6. Decompose into sounds — skip entirely for voice-only requests
     let mode: 'layer' | 'sequence' = 'layer'
-    let sounds: { label: string; prompt: string }[] = []
-    try {
-      const result = await decomposeSounds(ambientDesc)
-      mode = result.mode
-      sounds = result.sounds
-    } catch (e) {
-      console.error('sound decompose failed:', e)
-      sounds = [{
-        label: ambientDesc,
-        prompt: `${ambientDesc}, soft ambient ASMR texture, no music, no voice, no speech`,
-      }]
+    let sounds: { label: string; prompt: string; frequency: SoundFrequency; background: boolean }[] = []
+
+    if (!voiceOnly) {
+      const sceneInput = ambientDesc || input.trim()
+      try {
+        const result = await decomposeSounds(sceneInput)
+        mode = result.mode
+        sounds = result.sounds
+      } catch (e) {
+        console.error('sound decompose failed:', e)
+        sounds = [{
+          label: sceneInput,
+          prompt: `${sceneInput}, soft ambient ASMR texture, no music, no voice, no speech`,
+          frequency: 'continuous',
+          background: false,
+        }]
+      }
     }
 
-    // 5. Write voice script — only if user requested a voice
+    // 7. Write voice script — only if user requested a voice
     let script = ''
     if (wantsVoice) {
       const soundLabels = sounds.map(s => s.label).join(', ')
+      // sceneContext: what the voice should speak *about* when no explicit topic
+      const sceneContext = voiceOnly ? '' : (ambientDesc || soundLabels)
       try {
-        script = await writeScript(soundLabels || ambientDesc, delivery, mode)
+        script = await writeScript(delivery, explicitTopic, sceneContext, soundLabels)
       } catch (e) {
         console.error('script write failed:', e)
       }
