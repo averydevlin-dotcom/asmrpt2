@@ -174,11 +174,15 @@ export async function POST(req: NextRequest) {
     const speed     = isWhisper ? 0.78 : 0.88
     const model     = isWhisper ? 'eleven_turbo_v2_5' : 'eleven_multilingual_v2'
 
+    // Strip leading performance cues like "(whispering)" or "(softly)" —
+    // ElevenLabs reads them literally rather than treating them as directions.
+    const cleanScript = script.trim().replace(/^\([^)]{1,40}\)\s*/i, '').trim()
+
     const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
       method: 'POST',
       headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text: script.trim(),
+        text: cleanScript,
         model_id: model,
         speed,
         voice_settings: {
