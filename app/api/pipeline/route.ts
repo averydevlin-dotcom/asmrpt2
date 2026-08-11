@@ -3,12 +3,11 @@ import Anthropic from '@anthropic-ai/sdk'
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 // ─── VOICE DETECTION (deterministic regex — never guessed) ───────────
-// Default: american / female / whisper
 
 function detectDelivery(input: string): 'whisper' | 'soft' {
   if (/whisper/i.test(input)) return 'whisper'
   if (/\b(soft|gentle|calm)\s+(voice|narrator|narration|speaking)\b/i.test(input)) return 'soft'
-  return 'whisper' // default is always whisper
+  return 'whisper'
 }
 
 function detectGender(input: string): 'female' | 'male' {
@@ -31,8 +30,6 @@ function buildLabel(accent: string, gender: string, delivery: string): string {
 }
 
 // ─── VOICE CUE STRIPPER ──────────────────────────────────────────────
-// Removes voice/accent/delivery descriptors so only the ambient scene
-// description is left for sound generation.
 
 function stripVoiceCues(input: string): string {
   return input
@@ -50,65 +47,89 @@ function stripVoiceCues(input: string): string {
 }
 
 // ─── SOUND DECOMPOSER ────────────────────────────────────────────────
-// Haiku identifies 1–3 ambient sounds from the scene description.
-// These feed DIRECTLY into ElevenLabs sound generation.
+// Haiku classifies the scene as layer (simultaneous ambient) or sequence
+// (ordered actions that tell a story), then decomposes accordingly.
 
-const SOUND_SYSTEM = `You are an ASMR sound scene decomposer for an AI sound generation app powered by ElevenLabs.
-Given a description of a scene, identify 1-3 distinct ambient sounds that together paint that atmosphere.
-Focus only on actual audible textures — not visuals, not people, not voice.
-Each prompt will be sent directly to ElevenLabs sound generation.
+const SOUND_SYSTEM = `You are an ASMR sound scene decomposer for an AI sound generation app.
 
-Rules:
-- Describe each sound as a continuous ambient texture
+First, classify the playback MODE:
+- "layer": an ambient environment or atmosphere where multiple sounds play simultaneously (fireplace + rain, forest stream, café background, ocean waves + wind)
+- "sequence": a single focused activity with implied steps or motion, where sounds play one after another to tell a micro-story (walking in sand, watercolor on canvas, making tea, brushing hair, writing in a journal, folding paper, sharpening a pencil)
+
+Then identify sounds based on the mode:
+
+For LAYER mode: 1–3 simultaneous ambient textures that together paint the atmosphere.
+For SEQUENCE mode: 2–4 ordered action sounds that form a narrative arc.
+  - Each should be a specific moment or physical action, not a continuous loop
+  - Order them as they'd naturally occur (e.g. brush dips in water → taps glass rim → strokes canvas)
+  - Each clip should feel like a distinct moment, 3–10 seconds of sound
+
+Rules for all sounds:
+- Describe each sound as a close-up audible texture or action
 - Use soft, ASMR-appropriate language
-- Include: "no music, no singing, no voice, no speech, no percussion" in each prompt
-- Keep prompts under 25 words each
+- Include "no music, no singing, no voice, no speech, no percussion" in every prompt
+- Keep prompts under 28 words each
 
-Respond with ONLY a valid JSON array, no other text:
-[{"label": "Rain on window", "prompt": "soft rain pattering gently on glass, quiet close-up texture, no thunder, no music, no voice, no speech"}]`
+Respond with ONLY valid JSON, no other text:
 
-async function decomposeSounds(scene: string): Promise<{ label: string; prompt: string }[]> {
+Layer example:
+{"mode":"layer","sounds":[{"label":"Rain on window","prompt":"soft rain pattering gently on glass, quiet close-up texture, no thunder, no music, no voice, no speech"}]}
+
+Sequence example (watercolor):
+{"mode":"sequence","sounds":[
+  {"label":"Brush in water","prompt":"wet paintbrush swirling gently in water jar, soft swishing sound, no music, no voice, no speech"},
+  {"label":"Tap on glass rim","prompt":"wet brush tapping lightly on glass jar rim, single light drip, no music, no voice, no speech"},
+  {"label":"Stroke on canvas","prompt":"wet brush strokes slowly across watercolor paper, soft wet scratching, no music, no voice, no speech"}
+]}`
+
+async function decomposeSounds(scene: string): Promise<{
+  mode: 'layer' | 'sequence'
+  sounds: { label: string; prompt: string }[]
+}> {
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 400,
+    max_tokens: 500,
     system: SOUND_SYSTEM,
     messages: [{ role: 'user', content: scene }],
   })
   const text = msg.content[0].type === 'text' ? msg.content[0].text : ''
   const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
-  return JSON.parse(cleaned)
+  const parsed = JSON.parse(cleaned)
+  return {
+    mode: parsed.mode === 'sequence' ? 'sequence' : 'layer',
+    sounds: Array.isArray(parsed.sounds) ? parsed.sounds : [],
+  }
 }
 
 // ─── VOICE SCRIPT WRITER ─────────────────────────────────────────────
-// Haiku writes a narration ABOUT the specific sounds being generated —
-// so the voice and the ambient audio are always about the same scene.
 
-function buildScriptSystem(delivery: 'whisper' | 'soft'): string {
+function buildScriptSystem(delivery: 'whisper' | 'soft', mode: 'layer' | 'sequence'): string {
   const cue = delivery === 'whisper' ? '(whispering)' : '(softly)'
+  const context = mode === 'sequence'
+    ? 'You will receive a list of sounds in a sequence — they play one after another.'
+    : 'You will receive a list of ambient sounds that play simultaneously.'
   return `You write intimate ASMR narration scripts.
-You will receive a list of ambient sounds currently playing. Write a short narration that fits those sounds.
+${context} Write a short narration that fits the overall scene.
 
 Rules:
-- Begin with the exact text "${cue}" — this is a required performance cue for the voice engine, do not skip it
+- Begin with the exact text "${cue}" — required performance cue, do not skip
 - 40-55 words after the cue
 - Second-person present tense: "You settle in...", "Feel the warmth..."
 - Short phrases separated by ellipses (...)
-- Reference the specific sounds naturally — if rain is playing, mention it; if fire is crackling, include that
+- Reference the specific sounds naturally
 - Sensory language: texture, temperature, sound, breath, weight
 - No exclamation marks
 - No quotes around the output
 
-Example for rain + fireplace: "(whispering) You're here now... The fire crackles softly beside you... Rain taps the window in a steady rhythm... Feel the warmth... Breathe slowly... You have nowhere to be..."
-
 Respond with ONLY the script text.`
 }
 
-async function writeScript(soundLabels: string, delivery: 'whisper' | 'soft'): Promise<string> {
+async function writeScript(soundLabels: string, delivery: 'whisper' | 'soft', mode: 'layer' | 'sequence'): Promise<string> {
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 200,
-    system: buildScriptSystem(delivery),
-    messages: [{ role: 'user', content: `Currently playing: ${soundLabels}` }],
+    system: buildScriptSystem(delivery, mode),
+    messages: [{ role: 'user', content: `Sounds: ${soundLabels}` }],
   })
   return msg.content[0].type === 'text' ? msg.content[0].text.trim() : ''
 }
@@ -120,33 +141,35 @@ export async function POST(req: Request) {
     const { input } = await req.json()
     if (!input?.trim()) return Response.json({ error: 'No input' }, { status: 400 })
 
-    // 1. Detect voice params deterministically from full input
+    // 1. Detect voice params deterministically
     const delivery = detectDelivery(input)
     const gender   = detectGender(input)
     const accent   = detectAccent(input)
     const label    = buildLabel(accent, gender, delivery)
 
-    // 2. Strip voice cues → ambient scene for sound generation
+    // 2. Strip voice cues → ambient scene description
     const ambientDesc = stripVoiceCues(input) || input.trim()
 
-    // 3. Decompose ambient scene into ElevenLabs sound prompts
+    // 3. Decompose into sounds + detect mode (layer vs sequence)
+    let mode: 'layer' | 'sequence' = 'layer'
     let sounds: { label: string; prompt: string }[] = []
     try {
-      sounds = await decomposeSounds(ambientDesc)
+      const result = await decomposeSounds(ambientDesc)
+      mode = result.mode
+      sounds = result.sounds
     } catch (e) {
       console.error('sound decompose failed:', e)
-      // Fallback: treat the whole ambient description as one sound
       sounds = [{
         label: ambientDesc,
         prompt: `${ambientDesc}, soft ambient ASMR texture, no music, no voice, no speech`,
       }]
     }
 
-    // 4. Write voice script ABOUT those specific sounds (sequential — script references sounds)
+    // 4. Write voice script
     const soundLabels = sounds.map(s => s.label).join(', ')
     let script = ''
     try {
-      script = await writeScript(soundLabels || ambientDesc, delivery)
+      script = await writeScript(soundLabels || ambientDesc, delivery, mode)
     } catch (e) {
       console.error('script write failed:', e)
     }
@@ -155,6 +178,7 @@ export async function POST(req: Request) {
       voice: { script, accent, gender, delivery, label },
       sounds,
       ambientDesc,
+      mode,
     })
   } catch (e) {
     console.error('pipeline error:', e)
