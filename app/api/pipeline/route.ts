@@ -17,8 +17,7 @@ function detectGender(input: string): 'female' | 'male' {
 
 function detectAccent(input: string): string {
   if (/\b(british|england|english\s+accent|uk\s+accent)\b/i.test(input)) return 'british'
-  // Accept common misspellings of australian
-  if (/\b(australian?|austrailian?|aussie|australia)\b/i.test(input)) return 'australian'
+  if (/\b(australian|aussie|australia)\b/i.test(input)) return 'australian'
   if (/\b(irish|ireland)\b/i.test(input)) return 'irish'
   if (/\bamerican\b/i.test(input)) return 'american'
   // Generic "accent" without specifying which → british
@@ -53,7 +52,7 @@ function hasVoiceRequest(input: string): boolean {
 
 function stripVoiceCues(input: string): string {
   return input
-    .replace(/\b(british|australian?|austrailian?|aussie|australia|irish|american)\b/gi, '')
+    .replace(/\b(british|australian|aussie|irish|american)\b/gi, '')
     .replace(/\bwhisper\w*\b/gi, '')
     .replace(/\b(soft|gentle|calm)\s+(voice|narrator|narration|speaking)\b/gi, '')
     .replace(/\b(female|male)\s+(voice|narrator|narration)\b/gi, '')
