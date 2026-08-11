@@ -252,8 +252,10 @@ async function writeScript(
 
 export async function POST(req: Request) {
   try {
-    const { input } = await req.json()
-    if (!input?.trim()) return Response.json({ error: 'No input' }, { status: 400 })
+    const { input: rawInput } = await req.json()
+    if (!rawInput?.trim()) return Response.json({ error: 'No input' }, { status: 400 })
+    // Strip diacritics added by autocorrect (e.g. "mán" → "man")
+    const input = rawInput.normalize('NFD').replace(/[̀-ͯ]/g, '')
 
     // 1. Check if user asked for a voice/narrator at all
     const wantsVoice = hasVoiceRequest(input)
