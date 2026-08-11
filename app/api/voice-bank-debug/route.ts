@@ -65,11 +65,34 @@ export async function GET() {
       bank[row.gender][row.accent][row.delivery].push(`${row.name} (${row.voiceId})`)
     }
 
+    // 4. Simulate picks for common combinations
+    type PickRow = { gender: string; accent: string; delivery: string; picked: string | null }
+    const picks: PickRow[] = []
+    const combos = [
+      { gender: 'female', accent: 'american', delivery: 'calm' },
+      { gender: 'female', accent: 'american', delivery: 'whisper' },
+      { gender: 'female', accent: 'british',  delivery: 'calm' },
+      { gender: 'female', accent: 'british',  delivery: 'whisper' },
+      { gender: 'male',   accent: 'american', delivery: 'calm' },
+      { gender: 'male',   accent: 'american', delivery: 'whisper' },
+      { gender: 'male',   accent: 'british',  delivery: 'calm' },
+      { gender: 'male',   accent: 'british',  delivery: 'whisper' },
+      { gender: 'male',   accent: 'australian', delivery: 'calm' },
+    ]
+    for (const { gender, accent, delivery } of combos) {
+      let pool: string[] = bank[gender]?.[accent]?.[delivery] ?? []
+      if (pool.length === 0) pool = Object.values(bank[gender]?.[accent] ?? {}).flat()
+      if (pool.length === 0) pool = Object.values(bank[gender] ?? {}).flatMap((a: Record<string,string[]>) => a[delivery] ?? [])
+      if (pool.length === 0) pool = Object.values(bank[gender] ?? {}).flatMap((a: Record<string,string[]>) => Object.values(a).flat())
+      picks.push({ gender, accent, delivery, picked: pool[0] ?? null })
+    }
+
     return NextResponse.json({
       sheetFetchStatus: 'ok',
       totalRows: rawLines.length - 1,
       parsedRows: rows,
       bank,
+      simulatedPicks: picks,
       summary: {
         totalVoicesLoaded: rows.filter((r: object) => (r as {willBeUsed: boolean}).willBeUsed).length,
         totalVoicesSkipped: rows.filter((r: object) => !(r as {willBeUsed: boolean}).willBeUsed).length,
