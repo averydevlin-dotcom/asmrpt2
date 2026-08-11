@@ -4,28 +4,31 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 // ─── VOICE DETECTION (deterministic regex — never guessed) ───────────
 
-function detectDelivery(input: string): 'whisper' | 'soft' {
+// Delivery: 'whisper' = breathy/airy; 'calm' = gentle speaking voice (default)
+function detectDelivery(input: string): 'whisper' | 'calm' {
   if (/whisper/i.test(input)) return 'whisper'
-  if (/\b(soft|gentle|calm)\s+(voice|narrator|narration|speaking)\b/i.test(input)) return 'soft'
-  return 'whisper'
+  return 'calm'
 }
 
 function detectGender(input: string): 'female' | 'male' {
   if (/\b(male|man\b|men\b|guy|gentleman|his\s+voice|boy)\b/i.test(input)) return 'male'
-  return 'female'
+  return 'female'  // default: female
 }
 
 function detectAccent(input: string): string {
   if (/\b(british|england|english\s+accent|uk\s+accent)\b/i.test(input)) return 'british'
   if (/\b(australian|aussie|australia)\b/i.test(input)) return 'australian'
   if (/\b(irish|ireland)\b/i.test(input)) return 'irish'
-  return 'american'
+  if (/\bamerican\b/i.test(input)) return 'american'
+  // Generic "accent" without specifying which → british
+  if (/\baccent\b/i.test(input)) return 'british'
+  return 'american'  // default: american when no accent mentioned
 }
 
 function buildLabel(accent: string, gender: string, delivery: string): string {
   const a = accent === 'american' ? '' : accent.charAt(0).toUpperCase() + accent.slice(1) + ' '
   const g = gender === 'male' ? 'male' : 'female'
-  const d = delivery === 'whisper' ? 'whisper' : 'soft voice'
+  const d = delivery === 'whisper' ? 'whisper' : 'calm voice'
   return `${a}${g} ${d}`.trim()
 }
 
@@ -190,11 +193,11 @@ async function decomposeSounds(scene: string): Promise<{
 // ─── VOICE SCRIPT WRITER ─────────────────────────────────────────────
 
 function buildScriptSystem(
-  delivery: 'whisper' | 'soft',
+  delivery: 'whisper' | 'calm',
   explicitTopic: string | null,
   sceneContext: string,
 ): string {
-  const cue = delivery === 'whisper' ? '(whispering)' : '(softly)'
+  const cue = delivery === 'whisper' ? '(whispering)' : '(calmly)'
 
   let contentGuidance: string
   if (explicitTopic) {
@@ -226,7 +229,7 @@ Respond with ONLY the script text.`
 }
 
 async function writeScript(
-  delivery: 'whisper' | 'soft',
+  delivery: 'whisper' | 'calm',
   explicitTopic: string | null,
   sceneContext: string,
   soundLabels: string,
