@@ -16,7 +16,7 @@ interface SoundComponent {
   audioBuffer?: AudioBuffer
   warning?: string
   retries?: number
-  rare?: boolean       // sequence mode: true = occasional event (page turn), false = main action
+  frequency?: 'continuous' | 'occasional' | 'setup'  // how often to include in sequence
   background?: boolean // sequence mode: true = loops in background while sequence plays
   voiceConfig?: { accent: string; gender: string; delivery: string; script: string }
 }
@@ -508,26 +508,36 @@ export default function ASMRGenerator() {
     const f = getFilters()
     seqRef.current.stopped = false
 
-    const OVERLAP    = 0.9  // seconds of crossfade overlap between clips
-    const RARE_EVERY = 4    // include rare sounds every N full cycles through the sequence
+    const OVERLAP            = 0.9  // seconds of crossfade overlap between clips
+    const OCCASIONAL_EVERY   = 4    // play 'occasional' sounds every N cycles
+    const SETUP_EVERY        = 12   // play 'setup' sounds every N cycles (after first)
 
-    let cycleCount    = 0
+    let cycleCount    = 0   // which full pass we're on (0 = first pass)
     let posInCycle    = 0
-    let includeRare   = false
     let nextStartTime = audioCtx.currentTime + 0.05
 
-    // Returns next comp to play, skipping rare sounds until their cycle is due.
-    // Falls back to any available comp if all remaining are rare.
+    // Three-tier frequency gate:
+    //   continuous → always play
+    //   occasional → every OCCASIONAL_EVERY cycles
+    //   setup      → only cycle 0, then every SETUP_EVERY cycles
+    function shouldPlay(comp: SoundComponent, cycle: number): boolean {
+      const f = comp.frequency ?? 'continuous'
+      if (f === 'continuous') return true
+      if (f === 'occasional') return cycle % OCCASIONAL_EVERY === 0
+      if (f === 'setup')      return cycle === 0 || cycle % SETUP_EVERY === 0
+      return true
+    }
+
     function getNextComp(): SoundComponent {
       for (let attempts = 0; attempts < playable.length * 2; attempts++) {
         const item = playable[posInCycle]
+        const cycleWhenPlaying = cycleCount  // snapshot before potential increment
         posInCycle++
         if (posInCycle >= playable.length) {
           posInCycle = 0
           cycleCount++
-          includeRare = (cycleCount % RARE_EVERY === 0)
         }
-        if (!item.rare || includeRare) return item
+        if (shouldPlay(item, cycleWhenPlaying)) return item
       }
       return playable[0] // absolute fallback
     }
@@ -632,14 +642,14 @@ export default function ASMRGenerator() {
         const { voice, sounds, ambientDesc, mode: pipelineMode } = await res.json()
         mode = pipelineMode === 'sequence' ? 'sequence' : 'layer'
 
-        let soundComps: SoundComponent[] = (sounds as { label: string; prompt: string; rare?: boolean; background?: boolean }[]).map(s => ({
+        let soundComps: SoundComponent[] = (sounds as { label: string; prompt: string; frequency?: string; background?: boolean }[]).map(s => ({
           id: Math.random().toString(36).slice(2, 8),
           originalText: s.label,
           enhancedPrompt: `${s.prompt}, ${BASE_NEG_LOCAL}`,
           displayLabel: s.label,
           status: 'pending' as const,
           volume: 70,
-          rare: s.rare === true,
+          frequency: (['continuous','occasional','setup'].includes(s.frequency ?? '') ? s.frequency : 'continuous') as 'continuous' | 'occasional' | 'setup',
           background: s.background === true,
         }))
 
