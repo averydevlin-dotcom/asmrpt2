@@ -11,11 +11,8 @@ interface VoiceEntry { id: string; name: string }
 // bank[gender][accent][delivery] → VoiceEntry[]
 type VoiceBank = Record<string, Record<string, Record<string, VoiceEntry[]>>>
 
-// Hardcoded fallback used only if the CSV fetch fails entirely
-const FALLBACK_BANK: VoiceBank = {
-  female: { american: { calm: [{ id: 'GP1bgf0sjoFuuHkyrg8E', name: 'Shannon' }], whisper: [{ id: 'geVuXdUpU0lgUukWJCUE', name: 'Shannon ASMR' }] } },
-  male:   { american: { calm: [{ id: 'enzbGixeo55iqn1QxbbC', name: 'Jon' }],     whisper: [{ id: 'RO2BvjCY3XHTRsIYByXn', name: 'Sable' }] } },
-}
+// Empty fallback — if the sheet fails to load we return an error rather than use stale IDs
+const FALLBACK_BANK: VoiceBank = {}
 
 // 5-minute in-memory cache — refreshes automatically on the next request after expiry
 let bankCache: { data: VoiceBank; expiresAt: number } | null = null
@@ -69,33 +66,40 @@ async function loadVoiceBank(): Promise<VoiceBank> {
   }
 }
 
-async function pickFromBank(gender: string, accent: string, delivery: string): Promise<string> {
+async function pickFromBank(gender: string, accent: string, delivery: string): Promise<string | null> {
   const bank = await loadVoiceBank()
 
-  // Try exact match: gender + accent + delivery
+  // 1. Exact match: gender + accent + delivery
   let pool = bank[gender]?.[accent]?.[delivery] ?? []
 
-  // Fall back: same gender + accent, ignore delivery
+  // 2. Same gender + accent, any delivery
   if (pool.length === 0) {
     pool = Object.values(bank[gender]?.[accent] ?? {}).flat()
   }
 
-  // Fall back: same gender + american + delivery
+  // 3. Same gender, any accent, matching delivery — all from sheet
   if (pool.length === 0) {
-    pool = bank[gender]?.['american']?.[delivery] ?? []
+    pool = Object.values(bank[gender] ?? {})
+      .flatMap(accentMap => accentMap[delivery] ?? [])
   }
 
-  // Fall back: same gender + american, any delivery
+  // 4. Same gender, any accent, any delivery — still from sheet
   if (pool.length === 0) {
-    pool = Object.values(bank[gender]?.['american'] ?? {}).flat()
+    pool = Object.values(bank[gender] ?? {})
+      .flatMap(accentMap => Object.values(accentMap).flat())
   }
 
-  // Last resort: female american calm
+  // 5. Any voice in the sheet
   if (pool.length === 0) {
-    pool = Object.values(bank['female']?.['american'] ?? {}).flat()
+    pool = Object.values(bank)
+      .flatMap(genderMap => Object.values(genderMap)
+        .flatMap(accentMap => Object.values(accentMap).flat()))
   }
 
-  if (pool.length === 0) return 'GP1bgf0sjoFuuHkyrg8E'  // Shannon fallback
+  if (pool.length === 0) {
+    console.error('[tts] voice bank is empty — check Google Sheet')
+    return null
+  }
 
   const entry = pool[Math.floor(Math.random() * pool.length)]
   console.log(`[tts] picked: ${entry.name} (${entry.id}) [${gender}/${accent}/${delivery}]`)
@@ -120,8 +124,11 @@ export async function POST(req: NextRequest) {
     if (!apiKey) return NextResponse.json({ error: 'ELEVENLABS_API_KEY not configured' }, { status: 500 })
 
     // Audition mode: caller passed a specific voice ID to test
-    // Normal mode: pick randomly from the live Google Sheets voice bank
+    // Normal mode: pick exclusively from the Google Sheets voice bank
     const voiceId = voiceIdOverride ?? await pickFromBank(gender, accent, delivery)
+    if (!voiceId) {
+      return NextResponse.json({ error: 'No voices available — check your voice bank spreadsheet' }, { status: 503 })
+    }
     console.log(`[tts] using voiceId=${voiceId}${voiceIdOverride ? ' (override)' : ''}`)
 
     // whisper: very low stability → airy, breathy, intimate
