@@ -1,63 +1,106 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-// ─── CURATED VOICE BANK ───────────────────────────────────────────────
-// Hand-picked ElevenLabs built-in voices selected for ASMR quality.
-// To add/remove voices: find voice IDs at elevenlabs.io/voice-library
-// then update this list. The generator picks randomly from the matching pool.
-// Each entry: { id: EL voice_id, name: display name }
+// ─── LIVE VOICE BANK (Google Sheets CSV) ─────────────────────────────
+// Edit voices at: https://docs.google.com/spreadsheets/d/e/2PACX-1vQTSKf4M_nSfSL5ENVzT1ABHNo55arnkHKCvHcPKBS5X9nD5yC1ELLGXhfFZgn42-4yqlpJX6uX_c3t/pub?gid=1540295902&single=true&output=csv
+// Changes take effect within 5 minutes — no code push needed.
+
+const VOICE_BANK_CSV_URL =
+  'https://docs.google.com/spreadsheets/d/e/2PACX-1vQTSKf4M_nSfSL5ENVzT1ABHNo55arnkHKCvHcPKBS5X9nD5yC1ELLGXhfFZgn42-4yqlpJX6uX_c3t/pub?gid=1540295902&single=true&output=csv'
 
 interface VoiceEntry { id: string; name: string }
+// bank[gender][accent][delivery] → VoiceEntry[]
+type VoiceBank = Record<string, Record<string, Record<string, VoiceEntry[]>>>
 
-const VOICE_BANK: Record<string, Record<string, VoiceEntry[]>> = {
-  female: {
-    british: [
-      { id: 'Xb7hH8MSUJpSbSDYk0k2', name: 'Alice' },    // calm, elegant
-      { id: 'ThT5KcBeYPX3keUQqHPh', name: 'Dorothy' },   // warm, gentle
-      { id: 'pFZP5JQG7iQjIQuC4Bku', name: 'Lily' },      // soft, intimate
-    ],
-    american: [
-      { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel' },    // calm, clear
-      { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Sarah' },     // warm, breathy
-      { id: 'piTKgcLEGmPE4e6mEKli', name: 'Nicole' },    // natural whisper
-    ],
-    australian: [
-      { id: 'oWAxZDx7w5VEj9dCyTzz', name: 'Grace' },
-    ],
-    irish: [
-      { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel' },    // no native premade — use Rachel
-    ],
-  },
-  male: {
-    british: [
-      { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel' },    // deep, calm
-      { id: 'CYw3kZ28kcKqmElbDkAk', name: 'Dave' },      // warm, conversational
-    ],
-    american: [
-      { id: 'TxGEqnHWrfWFTfGW9XjX', name: 'Josh' },      // deep, clear
-      { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam' },      // calm, neutral
-    ],
-    australian: [
-      { id: 'ZQe5CZNOzWyzPSCn5a3c', name: 'James' },
-    ],
-    irish: [
-      { id: 'D38z5RcWu1voky8WS1ja', name: 'Fin' },
-    ],
-  },
+// Hardcoded fallback used only if the CSV fetch fails entirely
+const FALLBACK_BANK: VoiceBank = {
+  female: { american: { calm: [{ id: 'GP1bgf0sjoFuuHkyrg8E', name: 'Shannon' }], whisper: [{ id: 'geVuXdUpU0lgUukWJCUE', name: 'Shannon ASMR' }] } },
+  male:   { american: { calm: [{ id: 'enzbGixeo55iqn1QxbbC', name: 'Jon' }],     whisper: [{ id: 'RO2BvjCY3XHTRsIYByXn', name: 'Sable' }] } },
 }
 
-function pickFromBank(gender: string, accent: string): string {
-  const pool =
-    VOICE_BANK[gender]?.[accent] ??
-    VOICE_BANK[gender]?.['american'] ??
-    VOICE_BANK['female']?.['american'] ??
-    []
-  if (pool.length === 0) return '21m00Tcm4TlvDq8ikWAM'  // Rachel — last resort
+// 5-minute in-memory cache — refreshes automatically on the next request after expiry
+let bankCache: { data: VoiceBank; expiresAt: number } | null = null
+
+function parseCSVLine(line: string): string[] {
+  const cols: string[] = []
+  let cur = ''
+  let inQuotes = false
+  for (const ch of line) {
+    if (ch === '"') { inQuotes = !inQuotes }
+    else if (ch === ',' && !inQuotes) { cols.push(cur); cur = '' }
+    else { cur += ch }
+  }
+  cols.push(cur)
+  return cols
+}
+
+function parseVoiceBank(csv: string): VoiceBank {
+  const bank: VoiceBank = {}
+  const lines = csv.split('\n').slice(1)  // skip header row
+  for (const line of lines) {
+    const cols = parseCSVLine(line)
+    const name     = cols[0]?.trim() ?? ''
+    const voiceId  = cols[1]?.trim() ?? ''
+    const gender   = cols[2]?.trim().toLowerCase() ?? ''
+    const accent   = cols[3]?.trim().toLowerCase() ?? ''
+    const delivery = cols[4]?.trim().toLowerCase() ?? ''
+    if (!voiceId || !gender || !accent || !delivery) continue
+    // Stop at the instruction rows (no valid voice ID)
+    if (!voiceId.match(/^[A-Za-z0-9]{15,25}$/)) continue
+    bank[gender] ??= {}
+    bank[gender][accent] ??= {}
+    bank[gender][accent][delivery] ??= []
+    bank[gender][accent][delivery].push({ id: voiceId, name })
+  }
+  return bank
+}
+
+async function loadVoiceBank(): Promise<VoiceBank> {
+  if (bankCache && Date.now() < bankCache.expiresAt) return bankCache.data
+  try {
+    const res = await fetch(VOICE_BANK_CSV_URL, { cache: 'no-store' })
+    if (!res.ok) throw new Error(`CSV ${res.status}`)
+    const bank = parseVoiceBank(await res.text())
+    bankCache = { data: bank, expiresAt: Date.now() + 5 * 60 * 1000 }
+    console.log('[tts] voice bank refreshed from Google Sheets')
+    return bank
+  } catch (e) {
+    console.error('[tts] voice bank fetch failed, using fallback:', e)
+    return FALLBACK_BANK
+  }
+}
+
+async function pickFromBank(gender: string, accent: string, delivery: string): Promise<string> {
+  const bank = await loadVoiceBank()
+
+  // Try exact match: gender + accent + delivery
+  let pool = bank[gender]?.[accent]?.[delivery] ?? []
+
+  // Fall back: same gender + accent, ignore delivery
+  if (pool.length === 0) {
+    pool = Object.values(bank[gender]?.[accent] ?? {}).flat()
+  }
+
+  // Fall back: same gender + american + delivery
+  if (pool.length === 0) {
+    pool = bank[gender]?.['american']?.[delivery] ?? []
+  }
+
+  // Fall back: same gender + american, any delivery
+  if (pool.length === 0) {
+    pool = Object.values(bank[gender]?.['american'] ?? {}).flat()
+  }
+
+  // Last resort: female american calm
+  if (pool.length === 0) {
+    pool = Object.values(bank['female']?.['american'] ?? {}).flat()
+  }
+
+  if (pool.length === 0) return 'GP1bgf0sjoFuuHkyrg8E'  // Shannon fallback
+
   const entry = pool[Math.floor(Math.random() * pool.length)]
-  console.log(`[tts] voice bank → ${entry.name} (${entry.id}) [${gender}/${accent}]`)
+  console.log(`[tts] picked: ${entry.name} (${entry.id}) [${gender}/${accent}/${delivery}]`)
   return entry.id
 }
-
-// (Shared voice library search removed — voice bank is now the primary selection)
 
 // ─── HANDLER ─────────────────────────────────────────────────────────
 
@@ -77,8 +120,8 @@ export async function POST(req: NextRequest) {
     if (!apiKey) return NextResponse.json({ error: 'ELEVENLABS_API_KEY not configured' }, { status: 500 })
 
     // Audition mode: caller passed a specific voice ID to test
-    // Normal mode: pick randomly from the curated voice bank
-    const voiceId = voiceIdOverride ?? pickFromBank(gender, accent)
+    // Normal mode: pick randomly from the live Google Sheets voice bank
+    const voiceId = voiceIdOverride ?? await pickFromBank(gender, accent, delivery)
     console.log(`[tts] using voiceId=${voiceId}${voiceIdOverride ? ' (override)' : ''}`)
 
     // whisper: very low stability → airy, breathy, intimate
