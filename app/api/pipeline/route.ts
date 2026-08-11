@@ -17,7 +17,8 @@ function detectGender(input: string): 'female' | 'male' {
 
 function detectAccent(input: string): string {
   if (/\b(british|england|english\s+accent|uk\s+accent)\b/i.test(input)) return 'british'
-  if (/\b(australian|aussie|australia)\b/i.test(input)) return 'australian'
+  // Accept common misspellings of australian
+  if (/\b(australian?|austrailian?|aussie|australia)\b/i.test(input)) return 'australian'
   if (/\b(irish|ireland)\b/i.test(input)) return 'irish'
   if (/\bamerican\b/i.test(input)) return 'american'
   // Generic "accent" without specifying which → british
@@ -52,14 +53,18 @@ function hasVoiceRequest(input: string): boolean {
 
 function stripVoiceCues(input: string): string {
   return input
-    .replace(/\b(british|australian|irish)\b/gi, '')
+    .replace(/\b(british|australian?|austrailian?|aussie|australia|irish|american)\b/gi, '')
     .replace(/\bwhisper\w*\b/gi, '')
     .replace(/\b(soft|gentle|calm)\s+(voice|narrator|narration|speaking)\b/gi, '')
     .replace(/\b(female|male)\s+(voice|narrator|narration)\b/gi, '')
     .replace(/\ba?\s*(woman|man)\s+(whispering|voice|narrator|narrating|speaking)\b/gi, '')
     .replace(/\b(soft|gentle)\s+(male|female|woman|man)\s*(voice|narrator)?\b/gi, '')
-    .replace(/\b(female|male|woman|man)\s+whispering\b/gi, '')
+    .replace(/\b(female|male|woman|man|girl|guy)\s+whispering\b/gi, '')
     .replace(/\bnarrator\w*\b/gi, '')
+    // Strip standalone gender nouns left over after other replacements
+    .replace(/\b(man|woman|girl|guy|male|female|boy)\b/gi, '')
+    // Strip relationship phrases that aren't scene descriptions
+    .replace(/\b(to|for|with)\s+me\b/gi, '')
     .replace(/\s+/g, ' ')
     .replace(/^[\s,]+|[\s,]+$/g, '')
     .trim()
@@ -99,8 +104,8 @@ function isVoiceOnly(ambientDesc: string, explicitTopic: string | null): boolean
   if (explicitTopic) return true              // explicit topic = voice script, no sounds
   if (!ambientDesc || ambientDesc.length < 6) return true  // nothing left after stripping
   if (SCENE_WORDS.test(ambientDesc) || ACTIVITY_WORDS.test(ambientDesc)) return false
-  // Short pronoun/preposition fragments like "to me", "for me" — not a real scene
-  return ambientDesc.trim().split(/\s+/).length < 3
+  // Short pronoun/preposition fragments like "to me", "by me" — not a real scene
+  return ambientDesc.trim().split(/\s+/).length < 4
 }
 
 // ─── SOUND DECOMPOSER ────────────────────────────────────────────────
