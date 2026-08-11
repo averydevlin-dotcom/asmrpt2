@@ -164,7 +164,15 @@ export async function POST(req: NextRequest) {
     }
 
     const audioData = await response.arrayBuffer()
-    return new NextResponse(audioData, { headers: { 'Content-Type': 'audio/mpeg' } })
+    return new NextResponse(audioData, {
+      headers: {
+        'Content-Type': 'audio/mpeg',
+        'X-Voice-Id': voiceId,
+        'X-Voice-Gender': gender,
+        'X-Voice-Accent': accent,
+        'X-Voice-Delivery': delivery,
+      },
+    })
   } catch (e) {
     console.error('[tts] error:', e)
     return NextResponse.json({ error: String(e) }, { status: 500 })
