@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 
 // ─── TYPES ───────────────────────────────────────────────────────────
 
@@ -34,6 +34,8 @@ interface AppState {
   filters: FilterSettings
   duration: number | null
   lastInput: string
+  mode: 'layer' | 'sequence'
+  currentSequenceId: string | null   // which step is playing in sequence mode
 }
 
 // ─── NEGATIVE CONSTRAINTS ────────────────────────────────────────────
@@ -223,7 +225,6 @@ const SCENE_ELEMENTS: SceneElement[] = [
     promptFn: () => 'soft sand moving gently, natural calming granular ASMR texture, soothing',
     negType: 'tapping',
   },
-  // ── NATURE & ENVIRONMENT ────────────────────────────────────────────
   {
     patterns: [/\bbird\w*/i, /\bbirdsong\b/i, /\bchirp\w*/i, /\bsongbird\w*/i, /\bdawn\b/i],
     label: 'Birdsong',
@@ -260,7 +261,6 @@ const SCENE_ELEMENTS: SceneElement[] = [
     promptFn: () => 'continuous low rolling thunder rumble in the far distance, sustained soft deep resonance, no sharp cracks, gentle storm ambience ASMR',
     negType: 'rain',
   },
-  // ── INDOOR / HOME ────────────────────────────────────────────────────
   {
     patterns: [/\bcampfire\b/i, /\bbonfire\b/i, /\boutdoor\s+fire\b/i],
     label: 'Campfire outdoor',
@@ -285,14 +285,12 @@ const SCENE_ELEMENTS: SceneElement[] = [
     promptFn: () => 'soft continuous library ambience, gentle steady background hum of a reading room, muffled distant atmosphere, calming ASMR',
     negType: 'tapping',
   },
-  // ── TRAVEL ───────────────────────────────────────────────────────────
   {
     patterns: [/\btrain\b/i, /\brailway\b/i, /\brailroad\b/i, /\btracks\b/i, /\blocomotive\b/i],
     label: 'Train ambience',
     promptFn: () => 'continuous steady train wheels rolling on rails, smooth unbroken rhythmic rumble of train travel, calming ASMR',
     negType: 'tapping',
   },
-  // ── MEDITATION ───────────────────────────────────────────────────────
   {
     patterns: [/\bsinging\s+bowl\b/i, /\btibetan\b/i, /\bmeditation\s+bell\b/i, /\bbowl\s+ring/i],
     label: 'Singing bowl',
@@ -315,8 +313,6 @@ const NON_ASMR: { patterns: RegExp[]; warning: string; fallbackIdx: number }[] =
   { patterns: [/\btalking\b/i, /\bspeaking\b/i, /\bconversation\b/i],
     warning: "Spoken voice isn't supported. Using breathing instead.", fallbackIdx: 19 },
 ]
-
-// (voice cue detection moved to /api/pipeline — always runs with defaults)
 
 // ─── SCENE EXTRACTION ────────────────────────────────────────────────
 
@@ -432,11 +428,19 @@ function formatTime(s: number): string {
 export default function ASMRGenerator() {
   const [state, setState] = useState<AppState>({
     phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null, lastInput: '',
+    mode: 'layer', currentSequenceId: null,
   })
 
-  const ctxRef = useRef<AudioContext | null>(null)
+  const ctxRef   = useRef<AudioContext | null>(null)
   const filterRef = useRef<FilterNodes | null>(null)
   const compNodesRef = useRef<Map<string, CompNodes>>(new Map())
+
+  // Sequence player state
+  const seqRef = useRef<{
+    stopped: boolean
+    currentSoundId: string | null
+    cleanup: () => void
+  }>({ stopped: true, currentSoundId: null, cleanup: () => {} })
 
   function getCtx(): AudioContext {
     if (!ctxRef.current || ctxRef.current.state === 'closed')
@@ -465,6 +469,7 @@ export default function ASMRGenerator() {
     return filterRef.current
   }
 
+  // ─── LAYER MODE: play a single component as a loop ───────────────
   function playComp(id: string, buf: AudioBuffer, volume: number) {
     const audioCtx = getCtx(); const f = getFilters()
     stopComp(id)
@@ -488,7 +493,88 @@ export default function ASMRGenerator() {
     compNodesRef.current.delete(id)
   }
 
+  // ─── SEQUENCE MODE: chain sound clips in story order ─────────────
+  const startSequence = useCallback((comps: SoundComponent[]) => {
+    // Stop any running sequence
+    seqRef.current.stopped = true
+    seqRef.current.cleanup()
+
+    const playable = comps.filter(c => c.audioBuffer && c.status === 'ready' && !c.voiceConfig)
+    if (playable.length === 0) return
+
+    const audioCtx = getCtx()
+    const f = getFilters()
+
+    seqRef.current.stopped = false
+    seqRef.current.currentSoundId = null
+
+    let currentIdx = 0
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null
+
+    function playStep() {
+      if (seqRef.current.stopped) return
+
+      // Stop the previous sequence sound (not voice)
+      if (seqRef.current.currentSoundId) {
+        stopComp(seqRef.current.currentSoundId)
+      }
+
+      const comp = playable[currentIdx]
+      seqRef.current.currentSoundId = comp.id
+
+      // Tell UI which step is active
+      setState(prev => ({ ...prev, currentSequenceId: comp.id }))
+
+      const buf = comp.audioBuffer!
+      const r = rms(buf)
+      const normGain = audioCtx.createGain()
+      normGain.gain.value = r > 0 ? Math.min(6, TARGET_RMS / r) : 1
+      const userGain = audioCtx.createGain()
+      userGain.gain.value = comp.volume / 100
+      const src = audioCtx.createBufferSource()
+      src.buffer = buf
+      src.loop = false  // don't loop individual clips — sequence player handles repetition
+      src.connect(normGain); normGain.connect(userGain); userGain.connect(f.warmth)
+
+      let fired = false
+      src.onended = () => {
+        if (fired || seqRef.current.stopped) return
+        fired = true
+        compNodesRef.current.delete(comp.id)
+        currentIdx = (currentIdx + 1) % playable.length
+        // Brief natural pause between clips (300ms)
+        timeoutHandle = setTimeout(playStep, 300)
+      }
+
+      src.start()
+      compNodesRef.current.set(comp.id, { normalGain: normGain, userGain, source: src })
+
+      seqRef.current.cleanup = () => {
+        fired = true
+        if (timeoutHandle) clearTimeout(timeoutHandle)
+      }
+    }
+
+    playStep()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Start sequence when all sounds are ready and mode=sequence
+  useEffect(() => {
+    if (state.mode !== 'sequence') return
+    if (state.phase !== 'ready') return
+    const soundComps = state.components.filter(c => !c.voiceConfig)
+    const allDone = soundComps.length > 0 && soundComps.every(c => c.status === 'ready' || c.status === 'failed')
+    if (!allDone) return
+    const readyComps = soundComps.filter(c => c.status === 'ready' && c.audioBuffer)
+    if (readyComps.length > 0) startSequence(readyComps)
+  }, [state.phase, state.mode, state.components, startSequence])
+
   function stopAll() {
+    // Stop sequence player
+    seqRef.current.stopped = true
+    seqRef.current.cleanup()
+    seqRef.current.currentSoundId = null
+
     compNodesRef.current.forEach((_, id) => stopComp(id))
     if (filterRef.current) { filterRef.current.master.disconnect(); filterRef.current = null }
     ctxRef.current?.close(); ctxRef.current = null
@@ -500,11 +586,9 @@ export default function ASMRGenerator() {
     const BASE_NEG_LOCAL = 'no music, no singing, no voice, no speech, no percussion, no sudden loud sounds, no reverb tail, no distortion, isolated ambient texture only'
 
     let components: SoundComponent[] = []
+    let mode: 'layer' | 'sequence' = 'layer'
 
     try {
-      // Single pipeline call: strips voice cues, decomposes ambient sounds,
-      // detects accent/gender/delivery (defaults: american/female/whisper),
-      // then writes a voice script specifically about those sounds.
       const res = await fetch('/api/pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -512,9 +596,9 @@ export default function ASMRGenerator() {
       })
 
       if (res.ok) {
-        const { voice, sounds, ambientDesc } = await res.json()
+        const { voice, sounds, ambientDesc, mode: pipelineMode } = await res.json()
+        mode = pipelineMode === 'sequence' ? 'sequence' : 'layer'
 
-        // Build ambient sound components from pipeline decomposition
         let soundComps: SoundComponent[] = (sounds as { label: string; prompt: string }[]).map(s => ({
           id: Math.random().toString(36).slice(2, 8),
           originalText: s.label,
@@ -524,12 +608,10 @@ export default function ASMRGenerator() {
           volume: 70,
         }))
 
-        // Fallback: if pipeline returned no sounds, try local regex on stripped desc
         if (soundComps.length === 0) {
           soundComps = extractSceneComponents(ambientDesc || raw)
         }
 
-        // Voice component — always present, voice/accent/delivery filled in by pipeline
         if (voice?.script) {
           const voiceComp: SoundComponent = {
             id: Math.random().toString(36).slice(2, 8),
@@ -545,7 +627,6 @@ export default function ASMRGenerator() {
               script: voice.script,
             },
           }
-          // Voice is always first track; ambient sounds follow
           components = [voiceComp, ...soundComps].slice(0, 4)
         } else {
           components = soundComps
@@ -555,7 +636,6 @@ export default function ASMRGenerator() {
       console.error('pipeline failed:', e)
     }
 
-    // Emergency fallback if pipeline completely failed
     if (components.length === 0) {
       components = extractSceneComponents(raw)
       if (components.length === 0) {
@@ -571,13 +651,16 @@ export default function ASMRGenerator() {
       }
     }
 
-    setState(prev => ({ ...prev, phase: 'confirming', components, duration, lastInput: raw.trim() }))
+    setState(prev => ({
+      ...prev, phase: 'confirming', components, duration,
+      lastInput: raw.trim(), mode, currentSequenceId: null,
+    }))
   }
 
-  async function handleGenerate(components: SoundComponent[], duration: number | null) {
+  async function handleGenerate(components: SoundComponent[], duration: number | null, mode: 'layer' | 'sequence') {
     stopAll()
     setState(prev => ({
-      ...prev, phase: 'generating', duration,
+      ...prev, phase: 'generating', duration, mode, currentSequenceId: null,
       components: components.map(c => ({ ...c, status: 'generating', retries: 0 })),
     }))
 
@@ -614,7 +697,6 @@ export default function ASMRGenerator() {
               })
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
           const decoded = await audioCtx.decodeAudioData(await res.arrayBuffer())
-          // Skip silence validation for voice — TTS has intentional pauses between words
           if (isVoice || validateAudio(decoded).valid || attempts === 2) buf = decoded
           else attempts++
         } catch { attempts++; if (attempts >= maxAttempts) break }
@@ -630,8 +712,12 @@ export default function ASMRGenerator() {
         const updated = prev.components.map(c =>
           c.id === comp.id ? { ...c, status: 'ready' as ComponentStatus, audioBuffer: buf!, retries: 0 } : c
         )
-        const readyComp = updated.find(c => c.id === comp.id)
-        if (readyComp?.audioBuffer) playComp(comp.id, readyComp.audioBuffer, readyComp.volume)
+        // In LAYER mode: play each comp as soon as it's ready
+        // In SEQUENCE mode: voice still plays immediately; sound clips wait for all to be ready (handled by useEffect)
+        if (mode === 'layer' || isVoice) {
+          const readyComp = updated.find(c => c.id === comp.id)
+          if (readyComp?.audioBuffer) playComp(comp.id, readyComp.audioBuffer, readyComp.volume)
+        }
         return { ...prev, components: updated, phase: updated.every(c => c.status !== 'generating') ? 'ready' : 'generating' }
       })
     }))
@@ -660,14 +746,14 @@ export default function ASMRGenerator() {
       const t = audioCtx.currentTime
       f.master.gain.setValueAtTime(f.master.gain.value, t)
       f.master.gain.linearRampToValueAtTime(0, t + 3)
-      setTimeout(() => { stopAll(); setState(prev => ({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null, lastInput: prev.lastInput })) }, 3500)
+      setTimeout(() => { stopAll(); setState(prev => ({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null, lastInput: prev.lastInput, mode: 'layer', currentSequenceId: null })) }, 3500)
     } else {
-      stopAll(); setState(prev => ({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null, lastInput: prev.lastInput }))
+      stopAll(); setState(prev => ({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null, lastInput: prev.lastInput, mode: 'layer', currentSequenceId: null }))
     }
   }
 
   function handleReset() {
-    stopAll(); setState(prev => ({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null, lastInput: prev.lastInput }))
+    stopAll(); setState(prev => ({ phase: 'idle', components: [], filters: DEFAULT_FILTERS, duration: null, lastInput: prev.lastInput, mode: 'layer', currentSequenceId: null }))
   }
 
   useEffect(() => () => stopAll(), []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -697,21 +783,22 @@ export default function ASMRGenerator() {
         {state.phase === 'idle' && <IdleView onSubmit={handleSubmit} initialInput={state.lastInput} />}
         {state.phase === 'confirming' && (
           <ConfirmView
-            components={state.components} duration={state.duration}
-            onConfirm={() => handleGenerate(state.components, state.duration)}
+            components={state.components} duration={state.duration} mode={state.mode}
+            onConfirm={() => handleGenerate(state.components, state.duration, state.mode)}
             onEdit={handleReset}
           />
         )}
         {(state.phase === 'generating' || state.phase === 'ready') && (
           <ActiveView
             components={state.components} filters={state.filters} duration={state.duration}
+            mode={state.mode} currentSequenceId={state.currentSequenceId}
             onVolume={handleVolume} onFilter={handleFilter} onExpire={handleExpire} onReset={handleReset}
           />
         )}
       </div>
 
       <p className="mt-12 text-[10px] text-white/10 tracking-wide">
-        v0.4 · AI generated · powered by ElevenLabs
+        v0.5 · AI generated · powered by ElevenLabs
       </p>
     </div>
   )
@@ -725,17 +812,17 @@ function IdleView({ onSubmit, initialInput = '' }: { onSubmit: (text: string, du
 
   const examples = [
     'fireplace crackling with rain outside',
-    'forest stream with rustling leaves',
+    'watercolor painting on canvas',
     'British woman whispering by a rainy window',
-    'soft rain on a tent',
-    'ocean waves with gentle wind',
-    'soft male voice with crackling fireplace',
+    'walking slowly through dry sand',
+    'making a cup of tea',
+    'writing in a journal by candlelight',
   ]
 
   return (
     <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-6 flex flex-col gap-5">
       <div className="flex flex-col gap-2">
-        <p className="text-xs text-white/60">Describe a scene — sounds are extracted automatically</p>
+        <p className="text-xs text-white/60">Describe a scene or activity — sounds are extracted automatically</p>
         <textarea
           value={input}
           onChange={e => setInput(e.target.value)}
@@ -781,34 +868,64 @@ function IdleView({ onSubmit, initialInput = '' }: { onSubmit: (text: string, du
 // ─── CONFIRM VIEW ────────────────────────────────────────────────────
 
 function ConfirmView({
-  components, duration, onConfirm, onEdit,
-}: { components: SoundComponent[]; duration: number | null; onConfirm: () => void; onEdit: () => void }) {
+  components, duration, mode, onConfirm, onEdit,
+}: { components: SoundComponent[]; duration: number | null; mode: 'layer' | 'sequence'; onConfirm: () => void; onEdit: () => void }) {
   const durationLabel = DURATION_OPTIONS.find(o => o.value === duration)?.label ?? '∞'
+  const soundComps = components.filter(c => !c.voiceConfig)
+  const voiceComp = components.find(c => c.voiceConfig)
+  const isSequence = mode === 'sequence'
+
   return (
     <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-6 flex flex-col gap-5">
       <div>
         <div className="flex items-center justify-between mb-4">
           <p className="text-[10px] text-white/30 uppercase tracking-widest">
-            {components.length} sound{components.length !== 1 ? 's' : ''} detected
+            {isSequence
+              ? `${soundComps.length}-step sequence`
+              : `${components.length} sound${components.length !== 1 ? 's' : ''} detected`
+            }
           </p>
           <span className="text-[10px] text-white/40">Runtime: {durationLabel}</span>
         </div>
-        <div className="flex flex-col gap-4">
-          {components.map((c, i) => (
-            <div key={c.id} className="flex gap-3">
-              <span className="text-white/35 text-xs mt-0.5 flex-shrink-0">{i + 1}.</span>
+
+        {/* Voice comp */}
+        {voiceComp && (
+          <div className="mb-4 pb-4 border-b border-white/[0.06]">
+            <div className="flex gap-3">
+              <span className="text-white/35 text-xs mt-0.5 flex-shrink-0">♪</span>
               <div className="flex flex-col gap-1">
-                {c.warning && <p className="text-xs text-amber-400/70 leading-relaxed">⚠ {c.warning}</p>}
                 <p className="text-sm text-white font-light">
-                  {c.displayLabel}
-                  {c.voiceConfig && (
+                  {voiceComp.displayLabel}
+                  {voiceComp.voiceConfig && (
                     <span className="ml-2 text-[10px] text-white/30 font-normal">
-                      · {c.voiceConfig.accent} {c.voiceConfig.gender} · {c.voiceConfig.delivery}
+                      · {voiceComp.voiceConfig.accent} {voiceComp.voiceConfig.gender} · {voiceComp.voiceConfig.delivery}
                     </span>
                   )}
                 </p>
-                <p className="text-[10px] text-white/35 italic leading-relaxed">"{c.enhancedPrompt}"</p>
+                <p className="text-[10px] text-white/35 italic leading-relaxed">"{voiceComp.enhancedPrompt}"</p>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Sound comps — show arrows between steps in sequence mode */}
+        <div className="flex flex-col gap-3">
+          {soundComps.map((c, i) => (
+            <div key={c.id}>
+              <div className="flex gap-3">
+                <span className="text-white/35 text-xs mt-0.5 flex-shrink-0">{i + 1}.</span>
+                <div className="flex flex-col gap-1">
+                  {c.warning && <p className="text-xs text-amber-400/70 leading-relaxed">⚠ {c.warning}</p>}
+                  <p className="text-sm text-white font-light">{c.displayLabel}</p>
+                  <p className="text-[10px] text-white/35 italic leading-relaxed">"{c.enhancedPrompt}"</p>
+                </div>
+              </div>
+              {isSequence && i < soundComps.length - 1 && (
+                <div className="ml-5 mt-2 text-white/20 text-xs">↓</div>
+              )}
+              {isSequence && i === soundComps.length - 1 && (
+                <div className="ml-5 mt-2 text-white/15 text-[10px]">↺ loops</div>
+              )}
             </div>
           ))}
         </div>
@@ -830,9 +947,10 @@ function ConfirmView({
 const COMP_COLORS = ['#9C7A5E','#7EC8E3','#C4A0D4','#D4C87A','#F0A0B8','#A0D4B8']
 
 function ActiveView({
-  components, filters, duration, onVolume, onFilter, onExpire, onReset,
+  components, filters, duration, mode, currentSequenceId, onVolume, onFilter, onExpire, onReset,
 }: {
   components: SoundComponent[]; filters: FilterSettings; duration: number | null
+  mode: 'layer' | 'sequence'; currentSequenceId: string | null
   onVolume: (id: string, v: number) => void; onFilter: (k: keyof FilterSettings, v: number) => void
   onExpire: () => void; onReset: () => void
 }) {
@@ -841,6 +959,10 @@ function ActiveView({
   const [expired, setExpired] = useState(false)
   const allDone = components.every(c => c.status === 'ready' || c.status === 'failed')
   const anyReady = components.some(c => c.status === 'ready')
+
+  const soundComps = components.filter(c => !c.voiceConfig)
+  const seqReady = mode === 'sequence' && soundComps.every(c => c.status === 'ready' || c.status === 'failed')
+  const currentSeqIdx = soundComps.findIndex(c => c.id === currentSequenceId)
 
   useEffect(() => {
     if (!duration || !allDone) return
@@ -875,25 +997,57 @@ function ActiveView({
         </div>
       )}
 
+      {/* Sequence progress indicator */}
+      {mode === 'sequence' && seqReady && currentSequenceId && (
+        <div className="flex items-center gap-1.5 px-1">
+          {soundComps.filter(c => c.status === 'ready').map((c, i) => (
+            <div key={c.id} className="flex items-center gap-1.5">
+              <div
+                className={`h-1 rounded-full transition-all duration-300 ${c.id === currentSequenceId ? 'w-6 bg-white/60' : 'w-2 bg-white/15'}`}
+              />
+            </div>
+          ))}
+          <span className="text-[10px] text-white/30 ml-1">
+            step {currentSeqIdx + 1} of {soundComps.filter(c => c.status === 'ready').length}
+          </span>
+        </div>
+      )}
+
       <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5 flex flex-col gap-5">
         {components.map((comp, i) => {
           const color = COMP_COLORS[i % COMP_COLORS.length]
           const isRetrying = (comp.retries ?? 0) > 0
+          const isCurrentSeqStep = mode === 'sequence' && !comp.voiceConfig && comp.id === currentSequenceId
+          const isOtherSeqStep = mode === 'sequence' && !comp.voiceConfig && comp.id !== currentSequenceId && comp.status === 'ready'
+
           return (
             <div key={comp.id} className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  {comp.status === 'ready' && <span className="w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0" style={{ background: color }} />}
+                  {/* Sequence: pulse only on current step; others get dim dot */}
+                  {isCurrentSeqStep && <span className="w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0" style={{ background: color }} />}
+                  {isOtherSeqStep && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-white/10" />}
+                  {/* Layer mode: pulse when ready */}
+                  {!comp.voiceConfig && mode === 'layer' && comp.status === 'ready' && <span className="w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0" style={{ background: color }} />}
+                  {comp.voiceConfig && comp.status === 'ready' && <span className="w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0" style={{ background: color }} />}
                   {comp.status === 'generating' && <span className="w-1.5 h-1.5 rounded-full animate-ping flex-shrink-0 bg-white/25" />}
                   {comp.status === 'failed' && <span className="text-red-400/50 text-xs">⚠</span>}
-                  <span className="text-sm font-light transition-colors"
-                    style={{ color: comp.status === 'ready' ? color : 'rgba(255,255,255,0.35)' }}>
+                  <span
+                    className="text-sm font-light transition-colors"
+                    style={{
+                      color: isCurrentSeqStep ? color
+                        : isOtherSeqStep ? 'rgba(255,255,255,0.20)'
+                        : comp.status === 'ready' ? color
+                        : 'rgba(255,255,255,0.35)',
+                    }}>
                     {comp.displayLabel}
                   </span>
                 </div>
                 <span className="text-[10px] text-white/35">
                   {comp.status === 'generating' && (isRetrying ? `Retrying (${comp.retries}/2)…` : 'Generating…')}
                   {comp.status === 'failed' && 'Failed'}
+                  {isCurrentSeqStep && 'playing'}
+                  {isOtherSeqStep && 'queued'}
                 </span>
               </div>
               {comp.status === 'ready' && (
@@ -901,7 +1055,7 @@ function ActiveView({
                   <div className="flex-1 relative h-5 flex items-center">
                     <div className="absolute inset-x-0 h-[3px] rounded-full bg-white/[0.08]" />
                     <div className="absolute left-0 h-[3px] rounded-full transition-all duration-75"
-                      style={{ width: `${comp.volume}%`, background: color, opacity: 0.65 }} />
+                      style={{ width: `${comp.volume}%`, background: color, opacity: isOtherSeqStep ? 0.2 : 0.65 }} />
                     <input type="range" min={0} max={100} value={comp.volume}
                       onChange={e => onVolume(comp.id, Number(e.target.value))}
                       className="absolute inset-0 w-full opacity-0 cursor-pointer" />
