@@ -79,6 +79,8 @@ For SEQUENCE mode: 2–4 ordered action sounds that form a narrative arc.
   - Each should be a specific moment or physical action, not a continuous loop
   - Order them as they'd naturally occur (e.g. brush dips in water → taps glass rim → strokes canvas)
   - Each clip should feel like a distinct moment, 3–10 seconds of sound
+  - Add "rare": true for occasional events (page turns, pen clicks, picking/putting down objects, adjusting). These play every few loops rather than every cycle.
+  - Add "rare": false for continuous actions (writing, painting, pouring, walking steps).
 
 Rules for all sounds:
 - Describe each sound as a close-up audible texture or action
@@ -89,18 +91,17 @@ Rules for all sounds:
 Respond with ONLY valid JSON, no other text:
 
 Layer example:
-{"mode":"layer","sounds":[{"label":"Rain on window","prompt":"soft rain pattering gently on glass, quiet close-up texture, no thunder, no music, no voice, no speech"}]}
+{"mode":"layer","sounds":[{"label":"Rain on window","prompt":"soft rain pattering gently on glass, quiet close-up texture, no thunder, no music, no voice, no speech","rare":false}]}
 
-Sequence example (watercolor):
+Sequence example (journal writing):
 {"mode":"sequence","sounds":[
-  {"label":"Brush in water","prompt":"wet paintbrush swirling gently in water jar, soft swishing sound, no music, no voice, no speech"},
-  {"label":"Tap on glass rim","prompt":"wet brush tapping lightly on glass jar rim, single light drip, no music, no voice, no speech"},
-  {"label":"Stroke on canvas","prompt":"wet brush strokes slowly across watercolor paper, soft wet scratching, no music, no voice, no speech"}
+  {"label":"Pen on paper","prompt":"ballpoint pen writing slowly on paper, soft scratching, close-up ASMR, no music, no voice, no speech","rare":false},
+  {"label":"Page turn","prompt":"single slow paper page turn, soft rustle, no music, no voice, no speech","rare":true}
 ]}`
 
 async function decomposeSounds(scene: string): Promise<{
   mode: 'layer' | 'sequence'
-  sounds: { label: string; prompt: string }[]
+  sounds: { label: string; prompt: string; rare: boolean }[]
 }> {
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
@@ -111,9 +112,14 @@ async function decomposeSounds(scene: string): Promise<{
   const text = msg.content[0].type === 'text' ? msg.content[0].text : ''
   const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
   const parsed = JSON.parse(cleaned)
+  const rawSounds = Array.isArray(parsed.sounds) ? parsed.sounds : []
   return {
     mode: parsed.mode === 'sequence' ? 'sequence' : 'layer',
-    sounds: Array.isArray(parsed.sounds) ? parsed.sounds : [],
+    sounds: rawSounds.map((s: { label: string; prompt: string; rare?: boolean }) => ({
+      label: s.label,
+      prompt: s.prompt,
+      rare: s.rare === true,
+    })),
   }
 }
 
