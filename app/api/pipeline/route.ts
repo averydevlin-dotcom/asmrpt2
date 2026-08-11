@@ -29,6 +29,22 @@ function buildLabel(accent: string, gender: string, delivery: string): string {
   return `${a}${g} ${d}`.trim()
 }
 
+// ─── VOICE REQUEST DETECTION ─────────────────────────────────────────
+// Only generate a voice component if the user explicitly asked for one.
+// Ambient scenes (rain, fire, sand, etc.) get sound only.
+
+function hasVoiceRequest(input: string): boolean {
+  return (
+    /\bwhisper\w*/i.test(input) ||
+    /\b(narrator\w*|narration|narrating)\b/i.test(input) ||
+    /\b(soft|gentle|calm)\s+(voice|narrator|narration|speaking)\b/i.test(input) ||
+    /\b(female|male)\s+(voice|narrator|narration)\b/i.test(input) ||
+    /\b(woman|man|girl|guy)\s+(whispering|speaking|narrating|talking)\b/i.test(input) ||
+    /\b(british|australian|irish|american)\s+(woman|man|female|male|voice|accent)\b/i.test(input) ||
+    /\basmr\s+(voice|narrator)\b/i.test(input)
+  )
+}
+
 // ─── VOICE CUE STRIPPER ──────────────────────────────────────────────
 
 function stripVoiceCues(input: string): string {
@@ -141,16 +157,19 @@ export async function POST(req: Request) {
     const { input } = await req.json()
     if (!input?.trim()) return Response.json({ error: 'No input' }, { status: 400 })
 
-    // 1. Detect voice params deterministically
-    const delivery = detectDelivery(input)
-    const gender   = detectGender(input)
-    const accent   = detectAccent(input)
+    // 1. Check if user asked for a voice/narrator at all
+    const wantsVoice = hasVoiceRequest(input)
+
+    // 2. Detect voice params (only used if wantsVoice)
+    const delivery = wantsVoice ? detectDelivery(input) : 'whisper'
+    const gender   = wantsVoice ? detectGender(input)   : 'female'
+    const accent   = wantsVoice ? detectAccent(input)   : 'american'
     const label    = buildLabel(accent, gender, delivery)
 
-    // 2. Strip voice cues → ambient scene description
+    // 3. Strip voice cues → ambient scene description
     const ambientDesc = stripVoiceCues(input) || input.trim()
 
-    // 3. Decompose into sounds + detect mode (layer vs sequence)
+    // 4. Decompose into sounds + detect mode (layer vs sequence)
     let mode: 'layer' | 'sequence' = 'layer'
     let sounds: { label: string; prompt: string }[] = []
     try {
@@ -165,17 +184,19 @@ export async function POST(req: Request) {
       }]
     }
 
-    // 4. Write voice script
-    const soundLabels = sounds.map(s => s.label).join(', ')
+    // 5. Write voice script — only if user requested a voice
     let script = ''
-    try {
-      script = await writeScript(soundLabels || ambientDesc, delivery, mode)
-    } catch (e) {
-      console.error('script write failed:', e)
+    if (wantsVoice) {
+      const soundLabels = sounds.map(s => s.label).join(', ')
+      try {
+        script = await writeScript(soundLabels || ambientDesc, delivery, mode)
+      } catch (e) {
+        console.error('script write failed:', e)
+      }
     }
 
     return Response.json({
-      voice: { script, accent, gender, delivery, label },
+      voice: wantsVoice && script ? { script, accent, gender, delivery, label } : null,
       sounds,
       ambientDesc,
       mode,
