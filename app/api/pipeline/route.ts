@@ -75,12 +75,13 @@ First, classify the playback MODE:
 Then identify sounds based on the mode:
 
 For LAYER mode: 1–3 simultaneous ambient textures that together paint the atmosphere.
-For SEQUENCE mode: 2–4 ordered action sounds that form a narrative arc.
-  - Each should be a specific moment or physical action, not a continuous loop
-  - Order them as they'd naturally occur (e.g. brush dips in water → taps glass rim → strokes canvas)
-  - Each clip should feel like a distinct moment, 3–10 seconds of sound
-  - Add "rare": true for occasional events (page turns, pen clicks, picking/putting down objects, adjusting). These play every few loops rather than every cycle.
-  - Add "rare": false for continuous actions (writing, painting, pouring, walking steps).
+For SEQUENCE mode: 2–4 sounds that together tell the story.
+  - Classify each sound as either:
+    - "background": true — atmospheric/ambient sounds that loop continuously under the scene (candlelight, rain in background, fireplace crackle, fan hum, distant ambience). These play the whole time.
+    - "background": false — action sounds that form the sequence chain (pen on paper, page turn, brush stroke, footstep). These play one after another.
+  - For action sounds (background:false), also add:
+    - "rare": true for occasional events (page turns, pen clicks, picking things up, adjusting position)
+    - "rare": false for the main continuous action (writing, painting, pouring, steps)
 
 Rules for all sounds:
 - Describe each sound as a close-up audible texture or action
@@ -91,17 +92,18 @@ Rules for all sounds:
 Respond with ONLY valid JSON, no other text:
 
 Layer example:
-{"mode":"layer","sounds":[{"label":"Rain on window","prompt":"soft rain pattering gently on glass, quiet close-up texture, no thunder, no music, no voice, no speech","rare":false}]}
+{"mode":"layer","sounds":[{"label":"Rain on window","prompt":"soft rain pattering gently on glass, quiet close-up texture, no thunder, no music, no voice, no speech","background":false,"rare":false}]}
 
-Sequence example (journal writing):
+Sequence example (writing by candlelight):
 {"mode":"sequence","sounds":[
-  {"label":"Pen on paper","prompt":"ballpoint pen writing slowly on paper, soft scratching, close-up ASMR, no music, no voice, no speech","rare":false},
-  {"label":"Page turn","prompt":"single slow paper page turn, soft rustle, no music, no voice, no speech","rare":true}
+  {"label":"Candlelight ambience","prompt":"soft candle flame flickering quietly, gentle warm ambience, no music, no voice, no speech","background":true,"rare":false},
+  {"label":"Pen on paper","prompt":"ballpoint pen writing slowly on paper, soft scratching close-up ASMR, no music, no voice, no speech","background":false,"rare":false},
+  {"label":"Page turn","prompt":"single slow paper page turn, soft rustle, no music, no voice, no speech","background":false,"rare":true}
 ]}`
 
 async function decomposeSounds(scene: string): Promise<{
   mode: 'layer' | 'sequence'
-  sounds: { label: string; prompt: string; rare: boolean }[]
+  sounds: { label: string; prompt: string; rare: boolean; background: boolean }[]
 }> {
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
@@ -115,10 +117,11 @@ async function decomposeSounds(scene: string): Promise<{
   const rawSounds = Array.isArray(parsed.sounds) ? parsed.sounds : []
   return {
     mode: parsed.mode === 'sequence' ? 'sequence' : 'layer',
-    sounds: rawSounds.map((s: { label: string; prompt: string; rare?: boolean }) => ({
+    sounds: rawSounds.map((s: { label: string; prompt: string; rare?: boolean; background?: boolean }) => ({
       label: s.label,
       prompt: s.prompt,
       rare: s.rare === true,
+      background: s.background === true,
     })),
   }
 }
