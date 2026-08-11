@@ -16,6 +16,7 @@ interface SoundComponent {
   audioBuffer?: AudioBuffer
   warning?: string
   retries?: number
+  rare?: boolean   // sequence mode: true = occasional event (page turn), false = main action
   voiceConfig?: { accent: string; gender: string; delivery: string; script: string }
 }
 
@@ -493,9 +494,8 @@ export default function ASMRGenerator() {
     compNodesRef.current.delete(id)
   }
 
-  // ─── SEQUENCE MODE: chain sound clips in story order ─────────────
+  // ─── SEQUENCE MODE: crossfade chain with rare-sound cycling ──────
   const startSequence = useCallback((comps: SoundComponent[]) => {
-    // Stop any running sequence
     seqRef.current.stopped = true
     seqRef.current.cleanup()
 
@@ -504,58 +504,88 @@ export default function ASMRGenerator() {
 
     const audioCtx = getCtx()
     const f = getFilters()
-
     seqRef.current.stopped = false
-    seqRef.current.currentSoundId = null
 
-    let currentIdx = 0
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null
+    const OVERLAP    = 0.9  // seconds of crossfade overlap between clips
+    const RARE_EVERY = 4    // include rare sounds every N full cycles through the sequence
 
-    function playStep() {
+    let cycleCount    = 0
+    let posInCycle    = 0
+    let includeRare   = false
+    let nextStartTime = audioCtx.currentTime + 0.05
+
+    // Returns next comp to play, skipping rare sounds until their cycle is due.
+    // Falls back to any available comp if all remaining are rare.
+    function getNextComp(): SoundComponent {
+      for (let attempts = 0; attempts < playable.length * 2; attempts++) {
+        const item = playable[posInCycle]
+        posInCycle++
+        if (posInCycle >= playable.length) {
+          posInCycle = 0
+          cycleCount++
+          includeRare = (cycleCount % RARE_EVERY === 0)
+        }
+        if (!item.rare || includeRare) return item
+      }
+      return playable[0] // absolute fallback
+    }
+
+    function scheduleStep() {
       if (seqRef.current.stopped) return
 
-      // Stop the previous sequence sound (not voice)
-      if (seqRef.current.currentSoundId) {
-        stopComp(seqRef.current.currentSoundId)
-      }
+      const comp = getNextComp()
+      const buf  = comp.audioBuffer!
+      const clipDur   = buf.duration
+      const overlap   = Math.min(OVERLAP, clipDur * 0.25)
+      const fadeInDur = Math.min(0.35, (clipDur - overlap) / 2)
 
-      const comp = playable[currentIdx]
-      seqRef.current.currentSoundId = comp.id
+      const startAt = nextStartTime
+      const endAt   = startAt + clipDur
+      nextStartTime = endAt - overlap   // next clip starts as this one fades out
 
-      // Tell UI which step is active
-      setState(prev => ({ ...prev, currentSequenceId: comp.id }))
-
-      const buf = comp.audioBuffer!
-      const r = rms(buf)
+      // Audio graph: src → fadeGain → normGain → userGain → filter chain
+      const fadeGain = audioCtx.createGain()
       const normGain = audioCtx.createGain()
-      normGain.gain.value = r > 0 ? Math.min(6, TARGET_RMS / r) : 1
       const userGain = audioCtx.createGain()
-      userGain.gain.value = comp.volume / 100
       const src = audioCtx.createBufferSource()
       src.buffer = buf
-      src.loop = false  // don't loop individual clips — sequence player handles repetition
-      src.connect(normGain); normGain.connect(userGain); userGain.connect(f.warmth)
+      src.connect(fadeGain); fadeGain.connect(normGain); normGain.connect(userGain); userGain.connect(f.warmth)
 
-      let fired = false
-      src.onended = () => {
-        if (fired || seqRef.current.stopped) return
-        fired = true
-        compNodesRef.current.delete(comp.id)
-        currentIdx = (currentIdx + 1) % playable.length
-        // Brief natural pause between clips (300ms)
-        timeoutHandle = setTimeout(playStep, 300)
-      }
+      const r = rms(buf)
+      normGain.gain.value = r > 0 ? Math.min(6, TARGET_RMS / r) : 1
+      userGain.gain.value = comp.volume / 100
 
-      src.start()
+      // Envelope: fade in → sustain → fade out (overlaps into next clip)
+      fadeGain.gain.setValueAtTime(0, startAt)
+      fadeGain.gain.linearRampToValueAtTime(1, startAt + fadeInDur)
+      const fadeOutStart = Math.max(startAt + fadeInDur + 0.01, endAt - overlap)
+      fadeGain.gain.setValueAtTime(1, fadeOutStart)
+      fadeGain.gain.linearRampToValueAtTime(0, endAt)
+
+      src.start(startAt)
+      // Let src naturally end; WebAudio will clean it up
       compNodesRef.current.set(comp.id, { normalGain: normGain, userGain, source: src })
 
+      // Update UI when this clip's start time arrives
+      const msUntilStart = Math.max(0, (startAt - audioCtx.currentTime) * 1000)
+      const uiTimer = setTimeout(() => {
+        if (seqRef.current.stopped) return
+        seqRef.current.currentSoundId = comp.id
+        setState(prev => ({ ...prev, currentSequenceId: comp.id }))
+      }, msUntilStart)
+
+      // Schedule the next clip right when the crossfade begins
+      const msUntilNext = Math.max(50, (nextStartTime - audioCtx.currentTime) * 1000)
+      const nextTimer = setTimeout(scheduleStep, msUntilNext)
+
       seqRef.current.cleanup = () => {
-        fired = true
-        if (timeoutHandle) clearTimeout(timeoutHandle)
+        clearTimeout(uiTimer)
+        clearTimeout(nextTimer)
+        try { src.stop() } catch {}
       }
     }
 
-    playStep()
+    scheduleStep()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Start sequence when all sounds are ready and mode=sequence
@@ -599,13 +629,14 @@ export default function ASMRGenerator() {
         const { voice, sounds, ambientDesc, mode: pipelineMode } = await res.json()
         mode = pipelineMode === 'sequence' ? 'sequence' : 'layer'
 
-        let soundComps: SoundComponent[] = (sounds as { label: string; prompt: string }[]).map(s => ({
+        let soundComps: SoundComponent[] = (sounds as { label: string; prompt: string; rare?: boolean }[]).map(s => ({
           id: Math.random().toString(36).slice(2, 8),
           originalText: s.label,
           enhancedPrompt: `${s.prompt}, ${BASE_NEG_LOCAL}`,
           displayLabel: s.label,
           status: 'pending' as const,
           volume: 70,
+          rare: s.rare === true,
         }))
 
         if (soundComps.length === 0) {
