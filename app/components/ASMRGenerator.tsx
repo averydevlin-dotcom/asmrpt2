@@ -16,7 +16,8 @@ interface SoundComponent {
   audioBuffer?: AudioBuffer
   warning?: string
   retries?: number
-  rare?: boolean   // sequence mode: true = occasional event (page turn), false = main action
+  rare?: boolean       // sequence mode: true = occasional event (page turn), false = main action
+  background?: boolean // sequence mode: true = loops in background while sequence plays
   voiceConfig?: { accent: string; gender: string; delivery: string; script: string }
 }
 
@@ -499,7 +500,8 @@ export default function ASMRGenerator() {
     seqRef.current.stopped = true
     seqRef.current.cleanup()
 
-    const playable = comps.filter(c => c.audioBuffer && c.status === 'ready' && !c.voiceConfig)
+    // Background comps loop independently — exclude from the sequence chain
+    const playable = comps.filter(c => c.audioBuffer && c.status === 'ready' && !c.voiceConfig && !c.background)
     if (playable.length === 0) return
 
     const audioCtx = getCtx()
@@ -588,14 +590,15 @@ export default function ASMRGenerator() {
     scheduleStep()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Start sequence when all sounds are ready and mode=sequence
+  // Start sequence when all action sounds are ready and mode=sequence
   useEffect(() => {
     if (state.mode !== 'sequence') return
     if (state.phase !== 'ready') return
-    const soundComps = state.components.filter(c => !c.voiceConfig)
-    const allDone = soundComps.length > 0 && soundComps.every(c => c.status === 'ready' || c.status === 'failed')
+    // Only sequence non-background, non-voice comps
+    const actionComps = state.components.filter(c => !c.voiceConfig && !c.background)
+    const allDone = actionComps.length > 0 && actionComps.every(c => c.status === 'ready' || c.status === 'failed')
     if (!allDone) return
-    const readyComps = soundComps.filter(c => c.status === 'ready' && c.audioBuffer)
+    const readyComps = actionComps.filter(c => c.status === 'ready' && c.audioBuffer)
     if (readyComps.length > 0) startSequence(readyComps)
   }, [state.phase, state.mode, state.components, startSequence])
 
@@ -629,7 +632,7 @@ export default function ASMRGenerator() {
         const { voice, sounds, ambientDesc, mode: pipelineMode } = await res.json()
         mode = pipelineMode === 'sequence' ? 'sequence' : 'layer'
 
-        let soundComps: SoundComponent[] = (sounds as { label: string; prompt: string; rare?: boolean }[]).map(s => ({
+        let soundComps: SoundComponent[] = (sounds as { label: string; prompt: string; rare?: boolean; background?: boolean }[]).map(s => ({
           id: Math.random().toString(36).slice(2, 8),
           originalText: s.label,
           enhancedPrompt: `${s.prompt}, ${BASE_NEG_LOCAL}`,
@@ -637,6 +640,7 @@ export default function ASMRGenerator() {
           status: 'pending' as const,
           volume: 70,
           rare: s.rare === true,
+          background: s.background === true,
         }))
 
         if (soundComps.length === 0) {
@@ -743,11 +747,13 @@ export default function ASMRGenerator() {
         const updated = prev.components.map(c =>
           c.id === comp.id ? { ...c, status: 'ready' as ComponentStatus, audioBuffer: buf!, retries: 0 } : c
         )
-        // In LAYER mode: play each comp as soon as it's ready
-        // In SEQUENCE mode: voice still plays immediately; sound clips wait for all to be ready (handled by useEffect)
-        if (mode === 'layer' || isVoice) {
-          const readyComp = updated.find(c => c.id === comp.id)
-          if (readyComp?.audioBuffer) playComp(comp.id, readyComp.audioBuffer, readyComp.volume)
+        // Play immediately as a loop if:
+        // - layer mode (all sounds loop)
+        // - voice (always loops)
+        // - sequence mode background sound (ambient layer under the sequence)
+        const readyComp = updated.find(c => c.id === comp.id)
+        if (readyComp?.audioBuffer && (mode === 'layer' || isVoice || readyComp.background)) {
+          playComp(comp.id, readyComp.audioBuffer, readyComp.volume)
         }
         return { ...prev, components: updated, phase: updated.every(c => c.status !== 'generating') ? 'ready' : 'generating' }
       })
@@ -1048,17 +1054,17 @@ function ActiveView({
         {components.map((comp, i) => {
           const color = COMP_COLORS[i % COMP_COLORS.length]
           const isRetrying = (comp.retries ?? 0) > 0
-          const isCurrentSeqStep = mode === 'sequence' && !comp.voiceConfig && comp.id === currentSequenceId
-          const isOtherSeqStep = mode === 'sequence' && !comp.voiceConfig && comp.id !== currentSequenceId && comp.status === 'ready'
+          const isCurrentSeqStep = mode === 'sequence' && !comp.voiceConfig && !comp.background && comp.id === currentSequenceId
+          const isOtherSeqStep = mode === 'sequence' && !comp.voiceConfig && !comp.background && comp.id !== currentSequenceId && comp.status === 'ready'
+          const isBgLoop = mode === 'sequence' && comp.background && comp.status === 'ready'
 
           return (
             <div key={comp.id} className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  {/* Sequence: pulse only on current step; others get dim dot */}
                   {isCurrentSeqStep && <span className="w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0" style={{ background: color }} />}
                   {isOtherSeqStep && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-white/10" />}
-                  {/* Layer mode: pulse when ready */}
+                  {isBgLoop && <span className="w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0" style={{ background: color, opacity: 0.5 }} />}
                   {!comp.voiceConfig && mode === 'layer' && comp.status === 'ready' && <span className="w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0" style={{ background: color }} />}
                   {comp.voiceConfig && comp.status === 'ready' && <span className="w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0" style={{ background: color }} />}
                   {comp.status === 'generating' && <span className="w-1.5 h-1.5 rounded-full animate-ping flex-shrink-0 bg-white/25" />}
@@ -1079,6 +1085,7 @@ function ActiveView({
                   {comp.status === 'failed' && 'Failed'}
                   {isCurrentSeqStep && 'playing'}
                   {isOtherSeqStep && 'queued'}
+                  {isBgLoop && 'ambient'}
                 </span>
               </div>
               {comp.status === 'ready' && (
