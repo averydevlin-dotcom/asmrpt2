@@ -60,7 +60,7 @@ async function loadVoiceBank(): Promise<VoiceBank> {
     const res = await fetch(VOICE_BANK_CSV_URL, { cache: 'no-store' })
     if (!res.ok) throw new Error(`CSV ${res.status}`)
     const bank = parseVoiceBank(await res.text())
-    bankCache = { data: bank, expiresAt: Date.now() + 5 * 60 * 1000 }
+    bankCache = { data: bank, expiresAt: Date.now() + 1 * 60 * 1000 }
     console.log('[tts] voice bank refreshed from Google Sheets')
     return bank
   } catch (e) {
