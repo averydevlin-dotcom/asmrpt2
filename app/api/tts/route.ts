@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
       script,
       accent   = 'american',
       gender   = 'female',
-      delivery = 'whisper',
+      delivery = 'calm',
       voiceId: voiceIdOverride,   // optional: audition page passes a specific ID
     } = await req.json()
 
@@ -81,8 +81,10 @@ export async function POST(req: NextRequest) {
     const voiceId = voiceIdOverride ?? pickFromBank(gender, accent)
     console.log(`[tts] using voiceId=${voiceId}${voiceIdOverride ? ' (override)' : ''}`)
 
+    // whisper: very low stability → airy, breathy, intimate
+    // calm:    moderate stability → gentle, clear, soothing speaking voice (default)
     const isWhisper = delivery === 'whisper'
-    const stability = isWhisper ? 0.07 : 0.50
+    const stability = isWhisper ? 0.07 : 0.45
     const speed     = isWhisper ? 0.78 : 0.88
     const model     = isWhisper ? 'eleven_turbo_v2_5' : 'eleven_multilingual_v2'
 
