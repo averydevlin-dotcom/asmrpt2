@@ -77,11 +77,13 @@ Then identify sounds based on the mode:
 For LAYER mode: 1–3 simultaneous ambient textures that together paint the atmosphere.
 For SEQUENCE mode: 2–4 sounds that together tell the story.
   - Classify each sound as either:
-    - "background": true — atmospheric/ambient sounds that loop continuously under the scene (candlelight, rain in background, fireplace crackle, fan hum, distant ambience). These play the whole time.
-    - "background": false — action sounds that form the sequence chain (pen on paper, page turn, brush stroke, footstep). These play one after another.
-  - For action sounds (background:false), also add:
-    - "rare": true for occasional events (page turns, pen clicks, picking things up, adjusting position)
-    - "rare": false for the main continuous action (writing, painting, pouring, steps)
+    - "background": true — atmospheric/ambient sounds that loop continuously under the scene (candlelight, rain, fireplace crackle, fan hum, distant café noise). These play the whole time.
+    - "background": false — action sounds that form the sequence chain. These play one after another.
+  - For action sounds (background:false), set "frequency" to one of three values:
+    - "continuous" — the main repeating action that defines the activity (brush strokes on canvas, pen writing, footsteps, pouring tea). Plays every loop.
+    - "occasional" — happens naturally every few repetitions (brush dipping in water between strokes, stirring, page adjusting). Plays every ~4 loops.
+    - "setup" — a preparatory action that only happens at the start or very rarely (pouring water into the glass before painting, uncapping the pen, pulling out a sheet of paper, sitting down). Plays once at the very beginning, then once every ~12 loops.
+  - Order sounds naturally: setup actions first, then continuous/occasional interleaved.
 
 Rules for all sounds:
 - Describe each sound as a close-up audible texture or action
@@ -92,18 +94,20 @@ Rules for all sounds:
 Respond with ONLY valid JSON, no other text:
 
 Layer example:
-{"mode":"layer","sounds":[{"label":"Rain on window","prompt":"soft rain pattering gently on glass, quiet close-up texture, no thunder, no music, no voice, no speech","background":false,"rare":false}]}
+{"mode":"layer","sounds":[{"label":"Rain on window","prompt":"soft rain pattering gently on glass, quiet close-up texture, no thunder, no music, no voice, no speech","background":false,"frequency":"continuous"}]}
 
-Sequence example (writing by candlelight):
+Sequence example (watercolor painting):
 {"mode":"sequence","sounds":[
-  {"label":"Candlelight ambience","prompt":"soft candle flame flickering quietly, gentle warm ambience, no music, no voice, no speech","background":true,"rare":false},
-  {"label":"Pen on paper","prompt":"ballpoint pen writing slowly on paper, soft scratching close-up ASMR, no music, no voice, no speech","background":false,"rare":false},
-  {"label":"Page turn","prompt":"single slow paper page turn, soft rustle, no music, no voice, no speech","background":false,"rare":true}
+  {"label":"Pouring water","prompt":"water pouring gently into a small glass jar, soft trickle, no music, no voice, no speech","background":false,"frequency":"setup"},
+  {"label":"Brush stroke on canvas","prompt":"soft wet paintbrush strokes across watercolor paper, gentle scratching, no music, no voice, no speech","background":false,"frequency":"continuous"},
+  {"label":"Brush dip in water","prompt":"wet paintbrush swirling briefly in water jar, soft swish, no music, no voice, no speech","background":false,"frequency":"occasional"}
 ]}`
+
+type SoundFrequency = 'continuous' | 'occasional' | 'setup'
 
 async function decomposeSounds(scene: string): Promise<{
   mode: 'layer' | 'sequence'
-  sounds: { label: string; prompt: string; rare: boolean; background: boolean }[]
+  sounds: { label: string; prompt: string; frequency: SoundFrequency; background: boolean }[]
 }> {
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
@@ -117,10 +121,12 @@ async function decomposeSounds(scene: string): Promise<{
   const rawSounds = Array.isArray(parsed.sounds) ? parsed.sounds : []
   return {
     mode: parsed.mode === 'sequence' ? 'sequence' : 'layer',
-    sounds: rawSounds.map((s: { label: string; prompt: string; rare?: boolean; background?: boolean }) => ({
+    sounds: rawSounds.map((s: { label: string; prompt: string; frequency?: string; rare?: boolean; background?: boolean }) => ({
       label: s.label,
       prompt: s.prompt,
-      rare: s.rare === true,
+      // Support both new frequency field and legacy rare boolean
+      frequency: (['continuous','occasional','setup'].includes(s.frequency ?? '') ? s.frequency
+        : s.rare === true ? 'occasional' : 'continuous') as SoundFrequency,
       background: s.background === true,
     })),
   }
