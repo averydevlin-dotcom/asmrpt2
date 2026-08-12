@@ -876,6 +876,9 @@ function IdleView({ onSubmit, initialInput = '' }: { onSubmit: (text: string, du
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(input, duration) }}}
           placeholder="e.g. fireplace crackling with rain outside"
           rows={3}
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
           className="w-full bg-transparent text-sm text-white/80 placeholder-white/45 resize-none outline-none leading-relaxed"
         />
         <div className="flex flex-wrap gap-1.5 mt-1">
