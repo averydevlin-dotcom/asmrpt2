@@ -667,7 +667,7 @@ export default function ASMRGenerator() {
             enhancedPrompt: voice.script,
             displayLabel: voice.label ?? 'Narrator',
             status: 'pending',
-            volume: 80,
+            volume: 85,
             voiceConfig: {
               accent: voice.accent ?? 'american',
               gender: voice.gender ?? 'female',
@@ -675,7 +675,9 @@ export default function ASMRGenerator() {
               script: voice.script,
             },
           }
-          components = [voiceComp, ...soundComps].slice(0, 4)
+          // Background sounds should be quiet underneath the voice
+          const quietSoundComps = soundComps.map(s => ({ ...s, volume: 30 }))
+          components = [voiceComp, ...quietSoundComps].slice(0, 4)
         } else {
           components = soundComps
         }
