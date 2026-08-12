@@ -229,20 +229,22 @@ Write something a person would naturally say or think in this place. Do NOT desc
   }
 
   const styleRules = delivery === 'whisper'
-    ? `- Short phrases separated by ellipses (...)
+    ? `- Phrases separated by ellipses (...) to create a slow, breathing rhythm
 - Sensory language: texture, temperature, sound, breath, weight
-- Second-person present tense: "You settle in...", "Feel the warmth..."`
+- Second-person present tense: "You settle in...", "Feel the warmth..."
+- Let thoughts linger and circle back — this should feel like drifting`
     : `- Natural flowing sentences — like someone genuinely talking to you
 - Conversational and warm, not fragmented or poetic
-- Specific and concrete content (actually say the thing, don't describe the feeling of it)
-- First or second person as feels natural for the topic`
+- Specific and concrete content (actually say the thing, don't just describe the feeling of it)
+- First or second person as feels natural for the topic
+- Vary sentence length — some short, some longer — like real speech`
 
   return `You write intimate ASMR narration scripts.
 ${contentGuidance}
 
 Rules:
 - Begin with the exact text "${cue}" — required performance cue, do not skip
-- 40-55 words after the cue
+- 600–800 words after the cue
 ${styleRules}
 - No exclamation marks
 - No quotes around the output
@@ -259,7 +261,7 @@ async function writeScript(
   const userMsg = soundLabels ? `Background sounds: ${soundLabels}` : 'No background sounds.'
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 200,
+    max_tokens: 1500,
     system: buildScriptSystem(delivery, explicitTopic, sceneContext),
     messages: [{ role: 'user', content: userMsg }],
   })
