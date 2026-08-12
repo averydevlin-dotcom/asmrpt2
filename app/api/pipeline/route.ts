@@ -217,15 +217,22 @@ Write something a person would naturally say or think in this place. Do NOT desc
     contentGuidance = `Write gentle affirmations and soft reassurance — something calming and warm. Speak directly to the listener as "you," as if sitting close beside them.`
   }
 
+  const styleRules = delivery === 'whisper'
+    ? `- Short phrases separated by ellipses (...)
+- Sensory language: texture, temperature, sound, breath, weight
+- Second-person present tense: "You settle in...", "Feel the warmth..."`
+    : `- Natural flowing sentences — like someone genuinely talking to you
+- Conversational and warm, not fragmented or poetic
+- Specific and concrete content (actually say the thing, don't describe the feeling of it)
+- First or second person as feels natural for the topic`
+
   return `You write intimate ASMR narration scripts.
 ${contentGuidance}
 
 Rules:
 - Begin with the exact text "${cue}" — required performance cue, do not skip
 - 40-55 words after the cue
-- Second-person present tense: "You settle in...", "Feel the warmth..."
-- Short phrases separated by ellipses (...)
-- Sensory language: texture, temperature, sound, breath, weight
+${styleRules}
 - No exclamation marks
 - No quotes around the output
 
@@ -315,6 +322,7 @@ export async function POST(req: Request) {
       sounds,
       ambientDesc,
       mode,
+      voiceOnly,  // let the frontend skip fallback sound extraction when intentionally voice-only
     })
   } catch (e) {
     console.error('pipeline error:', e)
