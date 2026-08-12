@@ -112,10 +112,11 @@ export async function POST(req: NextRequest) {
   try {
     const {
       script,
-      accent   = 'american',
-      gender   = 'female',
-      delivery = 'calm',
+      accent          = 'american',
+      gender          = 'female',
+      delivery        = 'calm',
       voiceId: voiceIdOverride,   // optional: audition page passes a specific ID
+      speedMultiplier = 1.0,      // optional: slow=0.8, normal=1.0, fast=1.2
     } = await req.json()
 
     if (!script?.trim()) return NextResponse.json({ error: 'No script' }, { status: 400 })
@@ -144,9 +145,10 @@ export async function POST(req: NextRequest) {
     // calm:    moderate stability → gentle, clear, soothing speaking voice (default)
     // Always use eleven_multilingual_v2 — community voices don't reliably support turbo models
     const isWhisper = delivery === 'whisper'
-    const stability = isWhisper ? 0.07 : 0.45
-    const speed     = isWhisper ? 0.78 : 0.88
-    const model     = 'eleven_multilingual_v2'
+    const stability  = isWhisper ? 0.07 : 0.45
+    const baseSpeed  = isWhisper ? 0.78 : 0.88
+    const speed      = Math.min(1.5, Math.max(0.5, baseSpeed * speedMultiplier))
+    const model      = 'eleven_multilingual_v2'
 
     // Strip leading performance cues like "(whispering)" or "(softly)" —
     // ElevenLabs reads them literally rather than treating them as directions.
