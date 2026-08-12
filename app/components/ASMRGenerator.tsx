@@ -19,6 +19,7 @@ interface SoundComponent {
   frequency?: 'continuous' | 'occasional' | 'setup'  // how often to include in sequence
   background?: boolean // sequence mode: true = loops in background while sequence plays
   voiceConfig?: { accent: string; gender: string; delivery: string; script: string }
+  voiceName?: string  // resolved name from EL (e.g. "Trevor")
 }
 
 interface FilterSettings {
@@ -741,8 +742,19 @@ export default function ASMRGenerator() {
                 body: JSON.stringify({ text: prompt }),
               })
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const resolvedVoiceName = res.headers.get('x-voice-name') ?? undefined
           const decoded = await audioCtx.decodeAudioData(await res.arrayBuffer())
-          if (isVoice || validateAudio(decoded).valid || attempts === 2) buf = decoded
+          if (isVoice || validateAudio(decoded).valid || attempts === 2) {
+            buf = decoded
+            if (isVoice && resolvedVoiceName) {
+              setState(prev => ({
+                ...prev,
+                components: prev.components.map(c =>
+                  c.id === comp.id ? { ...c, voiceName: resolvedVoiceName } : c
+                ),
+              }))
+            }
+          }
           else attempts++
         } catch { attempts++; if (attempts >= maxAttempts) break }
       }
@@ -1082,16 +1094,21 @@ function ActiveView({
                   {comp.voiceConfig && comp.status === 'ready' && <span className="w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0" style={{ background: color }} />}
                   {comp.status === 'generating' && <span className="w-1.5 h-1.5 rounded-full animate-ping flex-shrink-0 bg-white/25" />}
                   {comp.status === 'failed' && <span className="text-red-400/50 text-xs">⚠</span>}
-                  <span
-                    className="text-sm font-light transition-colors"
-                    style={{
-                      color: isCurrentSeqStep ? color
-                        : isOtherSeqStep ? 'rgba(255,255,255,0.20)'
-                        : comp.status === 'ready' ? color
-                        : 'rgba(255,255,255,0.35)',
-                    }}>
-                    {comp.displayLabel}
-                  </span>
+                  <div className="flex flex-col">
+                    <span
+                      className="text-sm font-light transition-colors"
+                      style={{
+                        color: isCurrentSeqStep ? color
+                          : isOtherSeqStep ? 'rgba(255,255,255,0.20)'
+                          : comp.status === 'ready' ? color
+                          : 'rgba(255,255,255,0.35)',
+                      }}>
+                      {comp.displayLabel}
+                    </span>
+                    {comp.voiceConfig && comp.voiceName && (
+                      <span className="text-[10px] text-white/25">{comp.voiceName}</span>
+                    )}
+                  </div>
                 </div>
                 <span className="text-[10px] text-white/35">
                   {comp.status === 'generating' && (isRetrying ? `Retrying (${comp.retries}/2)…` : 'Generating…')}
