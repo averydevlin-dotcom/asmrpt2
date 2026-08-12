@@ -19,7 +19,8 @@ interface SoundComponent {
   frequency?: 'continuous' | 'occasional' | 'setup'  // how often to include in sequence
   background?: boolean // sequence mode: true = loops in background while sequence plays
   voiceConfig?: { accent: string; gender: string; delivery: string; script: string }
-  voiceName?: string  // resolved name from EL (e.g. "Trevor")
+  voiceName?: string   // resolved name from EL (e.g. "Trevor")
+  voiceDone?: boolean  // true once the voice has played through to the end
 }
 
 interface FilterSettings {
@@ -484,6 +485,24 @@ export default function ASMRGenerator() {
     return filterRef.current
   }
 
+  // ─── VOICE MODE: play once, fire callback when done ─────────────
+  function playVoiceOnce(id: string, buf: AudioBuffer, volume: number, onEnded: () => void) {
+    const audioCtx = getCtx(); const f = getFilters()
+    stopComp(id)
+    // No crossfade loop — play the full buffer from the start
+    const r = rms(buf)
+    const normGain = audioCtx.createGain()
+    normGain.gain.value = r > 0 ? Math.min(6, TARGET_RMS / r) : 1
+    const userGain = audioCtx.createGain()
+    userGain.gain.value = volume / 100
+    const src = audioCtx.createBufferSource()
+    src.buffer = buf; src.loop = false
+    src.connect(normGain); normGain.connect(userGain); userGain.connect(f.warmth)
+    src.onended = onEnded
+    src.start(0)
+    compNodesRef.current.set(id, { normalGain: normGain, userGain, source: src })
+  }
+
   // ─── LAYER MODE: play a single component as a loop ───────────────
   function playComp(id: string, buf: AudioBuffer, volume: number) {
     const audioCtx = getCtx(); const f = getFilters()
@@ -719,7 +738,7 @@ export default function ASMRGenerator() {
     }))
   }
 
-  async function handleGenerate(components: SoundComponent[], duration: number | null, mode: 'layer' | 'sequence') {
+  async function handleGenerate(components: SoundComponent[], duration: number | null, mode: 'layer' | 'sequence', voiceSpeed: 'slow' | 'normal' | 'fast' = 'normal') {
     stopAll()
     setState(prev => ({
       ...prev, phase: 'generating', duration, mode, currentSequenceId: null,
@@ -743,6 +762,7 @@ export default function ASMRGenerator() {
               components: prev.components.map(c => c.id === comp.id ? { ...c, retries: attempts } : c),
             }))
           }
+          const speedMultiplier = { slow: 0.8, normal: 1.0, fast: 1.2 }[voiceSpeed]
           const res = isVoice
             ? await fetch('/api/tts', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -751,6 +771,7 @@ export default function ASMRGenerator() {
                   accent: comp.voiceConfig!.accent,
                   gender: comp.voiceConfig!.gender,
                   delivery: comp.voiceConfig!.delivery,
+                  speedMultiplier,
                 }),
               })
             : await fetch('/api/generate', {
@@ -785,13 +806,22 @@ export default function ASMRGenerator() {
         const updated = prev.components.map(c =>
           c.id === comp.id ? { ...c, status: 'ready' as ComponentStatus, audioBuffer: buf!, retries: 0 } : c
         )
-        // Play immediately as a loop if:
-        // - layer mode (all sounds loop)
-        // - voice (always loops)
-        // - sequence mode background sound (ambient layer under the sequence)
+        // Voice plays once and fires voiceDone when finished.
+        // Sounds loop continuously (layer mode) or as background under a sequence.
         const readyComp = updated.find(c => c.id === comp.id)
-        if (readyComp?.audioBuffer && (mode === 'layer' || isVoice || readyComp.background)) {
-          playComp(comp.id, readyComp.audioBuffer, readyComp.volume)
+        if (readyComp?.audioBuffer) {
+          if (isVoice) {
+            playVoiceOnce(comp.id, readyComp.audioBuffer, readyComp.volume, () => {
+              setState(prev => ({
+                ...prev,
+                components: prev.components.map(c =>
+                  c.id === comp.id ? { ...c, voiceDone: true } : c
+                ),
+              }))
+            })
+          } else if (mode === 'layer' || readyComp.background) {
+            playComp(comp.id, readyComp.audioBuffer, readyComp.volume)
+          }
         }
         return { ...prev, components: updated, phase: updated.every(c => c.status !== 'generating') ? 'ready' : 'generating' }
       })
@@ -859,7 +889,7 @@ export default function ASMRGenerator() {
         {state.phase === 'confirming' && (
           <ConfirmView
             components={state.components} duration={state.duration} mode={state.mode}
-            onConfirm={() => handleGenerate(state.components, state.duration, state.mode)}
+            onConfirm={(speed) => handleGenerate(state.components, state.duration, state.mode, speed)}
             onEdit={handleReset}
           />
         )}
@@ -890,7 +920,7 @@ function IdleView({ onSubmit, initialInput = '' }: { onSubmit: (text: string, du
     'watercolor painting on canvas',
     'British woman whispering by a rainy window',
     'walking slowly through dry sand',
-    'making a cup of tea',
+    'woman guiding me through a body scan meditation, soft singing bowls in the background',
     'writing in a journal by candlelight',
   ]
 
@@ -947,7 +977,11 @@ function IdleView({ onSubmit, initialInput = '' }: { onSubmit: (text: string, du
 
 function ConfirmView({
   components, duration, mode, onConfirm, onEdit,
-}: { components: SoundComponent[]; duration: number | null; mode: 'layer' | 'sequence'; onConfirm: () => void; onEdit: () => void }) {
+}: {
+  components: SoundComponent[]; duration: number | null; mode: 'layer' | 'sequence'
+  onConfirm: (voiceSpeed: 'slow' | 'normal' | 'fast') => void; onEdit: () => void
+}) {
+  const [voiceSpeed, setVoiceSpeed] = useState<'slow' | 'normal' | 'fast'>('normal')
   const durationLabel = DURATION_OPTIONS.find(o => o.value === duration)?.label ?? '∞'
   const soundComps = components.filter(c => !c.voiceConfig)
   const voiceComp = components.find(c => c.voiceConfig)
@@ -1008,8 +1042,27 @@ function ConfirmView({
           ))}
         </div>
       </div>
+      {/* Voice speed selector — only shown when there's a voice component */}
+      {voiceComp && (
+        <div className="flex flex-col gap-2">
+          <p className="text-[10px] text-white/40 uppercase tracking-widest">Voice speed</p>
+          <div className="flex gap-2">
+            {(['slow', 'normal', 'fast'] as const).map(s => (
+              <button key={s} onClick={() => setVoiceSpeed(s)}
+                className={`px-3 py-1.5 rounded-lg text-xs transition-all border capitalize ${
+                  voiceSpeed === s
+                    ? 'bg-white/10 border-white/25 text-white'
+                    : 'border-white/[0.07] text-white/30 hover:text-white/60 hover:border-white/15'
+                }`}>
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex gap-3">
-        <button onClick={onConfirm} className="flex-1 py-2.5 rounded-xl text-xs tracking-wide bg-white text-black hover:bg-white/90 transition-all">
+        <button onClick={() => onConfirm(voiceSpeed)} className="flex-1 py-2.5 rounded-xl text-xs tracking-wide bg-white text-black hover:bg-white/90 transition-all">
           Generate ↗
         </button>
         <button onClick={onEdit} className="px-4 py-2.5 rounded-xl text-xs text-white/40 hover:text-white/70 border border-white/10 transition-all">
@@ -1129,7 +1182,8 @@ function ActiveView({
                 <span className="text-[10px] text-white/35">
                   {comp.status === 'generating' && (isRetrying ? `Retrying (${comp.retries}/2)…` : 'Generating…')}
                   {comp.status === 'failed' && 'Failed'}
-                  {isCurrentSeqStep && 'playing'}
+                  {comp.voiceDone && 'finished'}
+                  {!comp.voiceDone && isCurrentSeqStep && 'playing'}
                   {isOtherSeqStep && 'queued'}
                   {isBgLoop && 'ambient'}
                 </span>
