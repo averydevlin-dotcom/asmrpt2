@@ -79,6 +79,9 @@ function cleanTopic(raw: string): string {
   return raw
     .replace(/\b(that'?s?\s+)?(happening|playing|going on)\s+(in|outside|around)(\s+the)?\s+background\b/gi, '')
     .replace(/\bin\s+the\s+background\b/gi, '')
+    // Strip trailing scene-location phrases — "on the beach", "by the fire", "in the forest", etc.
+    // These describe the ambient setting, not the script topic.
+    .replace(/\b(on|by|at|near|beside|next\s+to|in|inside|outside|around)\s+(the|a|an)\s+(beach|ocean|sea|shore|forest|woods|fire|fireplace|rain|storm|river|stream|mountain|lake|pond|park|garden|field|meadow|city|street|caf[eé]|library|bedroom|kitchen|office|studio|candle|sand|window|desert|jungle|valley|cliff|dock|pier|boat|ship|train|bus|car|plane)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -217,8 +220,12 @@ function buildScriptSystem(
   let contentGuidance: string
   if (explicitTopic) {
     // User told us exactly what to talk about — do that, directly and genuinely.
-    contentGuidance = `The listener has asked the narrator to speak about: "${explicitTopic}".
-Write a script that is genuinely and directly about this topic. If they asked for compliments or affirmations, give real warm compliments. If they asked for a story, start the story. Speak directly to the listener as "you." Do NOT narrate or describe the narrator's voice or the act of whispering.`
+    // The scene is only ambient backdrop — do NOT make it the subject of the script.
+    const sceneNote = sceneContext
+      ? ` The ambient setting is "${sceneContext}" — this is just background atmosphere. Do NOT make the setting the subject of the script. Do not talk about how the listener behaves in that setting, or tie the compliments/story to that place. Speak as if you could be anywhere together.`
+      : ''
+    contentGuidance = `The listener has asked the narrator to speak about: "${explicitTopic}".${sceneNote}
+Write a script that is genuinely and directly about this topic. If they asked for compliments or affirmations, give real warm compliments about them as a person. If they asked for a story, start the story. Speak directly to the listener as "you." Do NOT narrate or describe the narrator's voice or the act of whispering.`
   } else if (sceneContext) {
     // Scene exists — write something a real person would say in that setting.
     contentGuidance = `The setting is: ${sceneContext}.
