@@ -75,10 +75,18 @@ function stripVoiceCues(input: string): string {
 // e.g. "man whispering about how amazing I am" → "how amazing I am"
 //      "someone telling me a story about dragons" → "a story about dragons"
 
+function cleanTopic(raw: string): string {
+  return raw
+    .replace(/\b(that'?s?\s+)?(happening|playing|going on)\s+(in|outside|around)(\s+the)?\s+background\b/gi, '')
+    .replace(/\bin\s+the\s+background\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function extractExplicitTopic(input: string): string | null {
   // "about X" pattern — most common
   const about = input.match(/\babout\s+([^.]{5,120}?)(?:\.|$)/i)
-  if (about) return about[1].trim()
+  if (about) return cleanTopic(about[1].trim()) || null
   // "telling me / tell me X"
   const tell = input.match(/\btell(?:ing)?\s+me\s+([^.]{5,120}?)(?:\.|$)/i)
   if (tell) return tell[1].trim()
@@ -96,13 +104,16 @@ function extractExplicitTopic(input: string): string | null {
 // either because the user gave an explicit script topic (no sounds needed)
 // or because the stripped description is too sparse to be a scene.
 
-const SCENE_WORDS = /\b(forest|woods|ocean|beach|rain|fire|fireplace|caf[eé]|library|park|garden|stream|river|mountain|field|meadow|city|street|kitchen|bedroom|studio|office|nature|water|wind|leaves|sand|snow|night|morning|evening|outside|candle)\b/i
+const SCENE_WORDS = /\b(forest|woods|ocean|beach|rain|storm|thunder|lightning|fire|fireplace|caf[eé]|library|park|garden|stream|river|mountain|field|meadow|city|street|kitchen|bedroom|studio|office|nature|water|wind|leaves|sand|snow|night|morning|evening|outside|candle)\b/i
 const ACTIVITY_WORDS = /\b(painting|walking|writing|reading|cooking|eating|drinking|drawing|knitting|folding|brushing|typing|studying|working|gardening|hiking|swimming|journaling)\b/i
 
 function isVoiceOnly(ambientDesc: string, explicitTopic: string | null): boolean {
-  if (explicitTopic) return true              // explicit topic = voice script, no sounds
-  if (!ambientDesc || ambientDesc.length < 6) return true  // nothing left after stripping
+  // Scene words always win — if there's a recognisable scene, generate sounds regardless
+  // of whether there's also an explicit topic ("talking about a storm in the background")
   if (SCENE_WORDS.test(ambientDesc) || ACTIVITY_WORDS.test(ambientDesc)) return false
+  // No scene — if there's an explicit topic it's pure voice-script mode
+  if (explicitTopic) return true
+  if (!ambientDesc || ambientDesc.length < 6) return true
   // Short pronoun/preposition fragments like "to me", "by me" — not a real scene
   return ambientDesc.trim().split(/\s+/).length < 4
 }
