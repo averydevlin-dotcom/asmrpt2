@@ -18,7 +18,7 @@ interface SoundComponent {
   retries?: number
   frequency?: 'continuous' | 'occasional' | 'setup'  // how often to include in sequence
   background?: boolean // sequence mode: true = loops in background while sequence plays
-  voiceConfig?: { accent: string; gender: string; delivery: string; script: string }
+  voiceConfig?: { accent: string; gender: string; delivery: string; script: string; speedMultiplier?: number }
   voiceName?: string   // resolved name from EL (e.g. "Trevor")
   voiceDone?: boolean  // true once the voice has played through to the end
 }
@@ -704,6 +704,7 @@ export default function ASMRGenerator() {
               gender: voice.gender ?? 'female',
               delivery: voice.delivery ?? 'whisper',
               script: voice.script,
+              speedMultiplier: voice.speedMultiplier ?? 1.0,
             },
           }
           // Background sounds sit underneath the voice
@@ -738,7 +739,7 @@ export default function ASMRGenerator() {
     }))
   }
 
-  async function handleGenerate(components: SoundComponent[], duration: number | null, mode: 'layer' | 'sequence', voiceSpeed: 'slow' | 'normal' | 'fast' = 'normal') {
+  async function handleGenerate(components: SoundComponent[], duration: number | null, mode: 'layer' | 'sequence') {
     stopAll()
     setState(prev => ({
       ...prev, phase: 'generating', duration, mode, currentSequenceId: null,
@@ -762,7 +763,6 @@ export default function ASMRGenerator() {
               components: prev.components.map(c => c.id === comp.id ? { ...c, retries: attempts } : c),
             }))
           }
-          const speedMultiplier = { slow: 0.8, normal: 1.0, fast: 1.2 }[voiceSpeed]
           const res = isVoice
             ? await fetch('/api/tts', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -771,7 +771,8 @@ export default function ASMRGenerator() {
                   accent: comp.voiceConfig!.accent,
                   gender: comp.voiceConfig!.gender,
                   delivery: comp.voiceConfig!.delivery,
-                  speedMultiplier,
+                  // speedMultiplier from pipeline (e.g. 0.85 for meditations)
+                  speedMultiplier: comp.voiceConfig!.speedMultiplier ?? 1.0,
                 }),
               })
             : await fetch('/api/generate', {
@@ -897,7 +898,7 @@ export default function ASMRGenerator() {
         {state.phase === 'confirming' && (
           <ConfirmView
             components={state.components} duration={state.duration} mode={state.mode}
-            onConfirm={(speed) => handleGenerate(state.components, state.duration, state.mode, speed)}
+            onConfirm={() => handleGenerate(state.components, state.duration, state.mode)}
             onEdit={handleReset}
           />
         )}
@@ -987,9 +988,8 @@ function ConfirmView({
   components, duration, mode, onConfirm, onEdit,
 }: {
   components: SoundComponent[]; duration: number | null; mode: 'layer' | 'sequence'
-  onConfirm: (voiceSpeed: 'slow' | 'normal' | 'fast') => void; onEdit: () => void
+  onConfirm: () => void; onEdit: () => void
 }) {
-  const [voiceSpeed, setVoiceSpeed] = useState<'slow' | 'normal' | 'fast'>('normal')
   const durationLabel = DURATION_OPTIONS.find(o => o.value === duration)?.label ?? '∞'
   const soundComps = components.filter(c => !c.voiceConfig)
   const voiceComp = components.find(c => c.voiceConfig)
@@ -1050,27 +1050,8 @@ function ConfirmView({
           ))}
         </div>
       </div>
-      {/* Voice speed selector — only shown when there's a voice component */}
-      {voiceComp && (
-        <div className="flex flex-col gap-2">
-          <p className="text-[10px] text-white/40 uppercase tracking-widest">Voice speed</p>
-          <div className="flex gap-2">
-            {(['slow', 'normal', 'fast'] as const).map(s => (
-              <button key={s} onClick={() => setVoiceSpeed(s)}
-                className={`px-3 py-1.5 rounded-lg text-xs transition-all border capitalize ${
-                  voiceSpeed === s
-                    ? 'bg-white/10 border-white/25 text-white'
-                    : 'border-white/[0.07] text-white/30 hover:text-white/60 hover:border-white/15'
-                }`}>
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       <div className="flex gap-3">
-        <button onClick={() => onConfirm(voiceSpeed)} className="flex-1 py-2.5 rounded-xl text-xs tracking-wide bg-white text-black hover:bg-white/90 transition-all">
+        <button onClick={onConfirm} className="flex-1 py-2.5 rounded-xl text-xs tracking-wide bg-white text-black hover:bg-white/90 transition-all">
           Generate ↗
         </button>
         <button onClick={onEdit} className="px-4 py-2.5 rounded-xl text-xs text-white/40 hover:text-white/70 border border-white/10 transition-all">
@@ -1220,7 +1201,7 @@ function ActiveView({
                         <div className="absolute inset-x-0 h-[3px] rounded-full bg-white/[0.08]" />
                         <div className="absolute h-[3px] rounded-full bg-white/30"
                           style={{ left: '50%', width: `${(voiceRate - 1) * 100}%`, transform: voiceRate < 1 ? `translateX(${(voiceRate - 1) * 100}%)` : 'none' }} />
-                        <input type="range" min={0.6} max={1.4} step={0.05} value={voiceRate}
+                        <input type="range" min={0.8} max={1.2} step={0.05} value={voiceRate}
                           onChange={e => { const r = Number(e.target.value); setVoiceRate(r); onVoiceRate(r) }}
                           className="absolute inset-0 w-full opacity-0 cursor-pointer" />
                       </div>
