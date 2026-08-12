@@ -654,7 +654,9 @@ export default function ASMRGenerator() {
           background: s.background === true,
         }))
 
-        if (soundComps.length === 0) {
+        // Only fall back to local extraction if there's no voice — if there IS a voice
+        // and no sounds, this is intentionally voice-only (don't add background sounds)
+        if (soundComps.length === 0 && !voice?.script) {
           soundComps = extractSceneComponents(ambientDesc || raw)
         }
 
