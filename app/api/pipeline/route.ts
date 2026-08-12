@@ -352,8 +352,12 @@ export async function POST(req: Request) {
       }
     }
 
+    // Meditation scripts should be generated slowly — pass a multiplier the TTS route applies
+    const isMeditation = !!explicitTopic && /meditat\w+/i.test(explicitTopic)
+    const speedMultiplier = isMeditation ? 0.85 : 1.0
+
     return Response.json({
-      voice: wantsVoice && script ? { script, accent, gender, delivery, label } : null,
+      voice: wantsVoice && script ? { script, accent, gender, delivery, label, speedMultiplier } : null,
       sounds,
       ambientDesc,
       mode,
