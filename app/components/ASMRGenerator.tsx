@@ -654,9 +654,11 @@ export default function ASMRGenerator() {
           background: s.background === true,
         }))
 
-        // Only fall back to local extraction if there's no voice — if there IS a voice
-        // and no sounds, this is intentionally voice-only (don't add background sounds)
-        if (soundComps.length === 0 && !voice?.script) {
+        // Fall back to local extraction only when needed:
+        // - Skip if voice-only (voice exists AND no scene was described)
+        // - Run if there's a scene but Haiku returned nothing, or if there's no voice at all
+        const isVoiceOnlyRequest = voice?.script && !ambientDesc
+        if (soundComps.length === 0 && !isVoiceOnlyRequest) {
           soundComps = extractSceneComponents(ambientDesc || raw)
         }
 
