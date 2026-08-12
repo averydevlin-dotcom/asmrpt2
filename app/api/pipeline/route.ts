@@ -42,9 +42,15 @@ function hasVoiceRequest(input: string): boolean {
     /\b(narrator\w*|narration|narrating)\b/i.test(input) ||
     /\b(soft|gentle|calm)\s+(voice|narrator|narration|speaking)\b/i.test(input) ||
     /\b(female|male)\s+(voice|narrator|narration)\b/i.test(input) ||
-    /\b(woman|man|girl|guy)\s+(whispering|speaking|narrating|talking)\b/i.test(input) ||
+    /\b(woman|man|girl|guy|lady)\s+(whispering|speaking|narrating|talking|guiding|reading|telling)\b/i.test(input) ||
     /\b(british|australian|irish|american)\s+(woman|man|female|male|voice|accent)\b/i.test(input) ||
-    /\basmr\s+(voice|narrator)\b/i.test(input)
+    /\basmr\s+(voice|narrator)\b/i.test(input) ||
+    // "guiding/leading/walking/taking me through", "guide me through"
+    /\b(guid\w*|lead\w*|walk\w*|tak\w*)\s+me\s+(through|into|in)\b/i.test(input) ||
+    // "someone/somebody/a person talking/reading/guiding me"
+    /\b(someone|somebody|a\s+(?:lady|woman|man|guy|person))\s+(?:guid\w+|lead\w+|read\w+|talk\w+|speak\w+|tell\w+)\b/i.test(input) ||
+    // "meditation guide", "guided meditation"
+    /\b(guided\s+meditat\w+|meditat\w+\s+guide)\b/i.test(input)
   )
 }
 
@@ -60,8 +66,10 @@ function stripVoiceCues(input: string): string {
     .replace(/\b(soft|gentle)\s+(male|female|woman|man)\s*(voice|narrator)?\b/gi, '')
     .replace(/\b(female|male|woman|man|girl|guy)\s+whispering\b/gi, '')
     .replace(/\bnarrator\w*\b/gi, '')
-    // Strip standalone gender nouns left over after other replacements
-    .replace(/\b(man|woman|girl|guy|male|female|boy)\b/gi, '')
+    // Strip standalone gender/person nouns left over after other replacements
+    .replace(/\b(man|woman|girl|guy|male|female|boy|lady)\b/gi, '')
+    // Strip narrator-action phrases: "guiding me through", "leading me through", etc.
+    .replace(/\b(guid\w*|lead\w*|walk\w*|tak\w*)\s+me\s+(through|into|in)\b/gi, '')
     // Strip relationship phrases that aren't scene descriptions
     .replace(/\b(to|for|with)\s+me\b/gi, '')
     .replace(/\s+/g, ' ')
@@ -99,6 +107,9 @@ function extractExplicitTopic(input: string): string | null {
   // "whispering that X"
   const that = input.match(/\bwhisper(?:ing)?\s+that\s+([^.]{5,120}?)(?:\.|$)/i)
   if (that) return that[1].trim()
+  // "guiding/leading/walking me through X" — treat X as the script subject
+  const guide = input.match(/\b(?:guid|lead|walk|tak)\w*\s+me\s+(?:through|into|in)\s+([^.]{3,80}?)(?:\s+with\b|\s+while\b|\s+and\b|\s+will\b|\.|$)/i)
+  if (guide) return guide[1].trim()
   return null
 }
 
@@ -108,7 +119,7 @@ function extractExplicitTopic(input: string): string | null {
 // or because the stripped description is too sparse to be a scene.
 
 const SCENE_WORDS = /\b(forest|woods|ocean|beach|rain|storm|thunder|lightning|fire|fireplace|caf[eé]|library|park|garden|stream|river|mountain|field|meadow|city|street|kitchen|bedroom|studio|office|nature|water|wind|leaves|sand|snow|night|morning|evening|outside|candle)\b/i
-const ACTIVITY_WORDS = /\b(painting|walking|writing|reading|cooking|eating|drinking|drawing|knitting|folding|brushing|typing|studying|working|gardening|hiking|swimming|journaling)\b/i
+const ACTIVITY_WORDS = /\b(painting|walking|writing|reading|cooking|eating|drinking|drawing|knitting|folding|brushing|typing|studying|working|gardening|hiking|swimming|journaling|meditat\w+)\b/i
 
 function isVoiceOnly(ambientDesc: string, explicitTopic: string | null): boolean {
   // Scene words always win — if there's a recognisable scene, generate sounds regardless
@@ -224,8 +235,12 @@ function buildScriptSystem(
     const sceneNote = sceneContext
       ? ` The ambient setting is "${sceneContext}" — this is just background atmosphere. Do NOT make the setting the subject of the script. Do not talk about how the listener behaves in that setting, or tie the compliments/story to that place. Speak as if you could be anywhere together.`
       : ''
-    contentGuidance = `The listener has asked the narrator to speak about: "${explicitTopic}".${sceneNote}
-Write a script that is genuinely and directly about this topic. If they asked for compliments or affirmations, give real warm compliments about them as a person. If they asked for a story, start the story. Speak directly to the listener as "you." Do NOT narrate or describe the narrator's voice or the act of whispering.`
+    const isMeditation = /meditat\w+/i.test(explicitTopic)
+    const topicGuidance = isMeditation
+      ? `Guide the listener through a ${explicitTopic}. Use slow breath cues, body scan prompts, grounding instructions, and moments of silence indicated by ellipses. Speak as a calm, warm guide directly addressing the listener as "you." Start immediately with the guidance — no preamble.`
+      : `Write a script genuinely and directly about "${explicitTopic}". If it's compliments or affirmations, give real warm specific ones. If it's a story, start the story immediately. Speak directly to the listener as "you."`
+    contentGuidance = `${topicGuidance}${sceneNote}
+Do NOT narrate or describe the narrator's voice or the act of speaking.`
   } else if (sceneContext) {
     // Scene exists — write something a real person would say in that setting.
     contentGuidance = `The setting is: ${sceneContext}.
