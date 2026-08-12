@@ -66,7 +66,7 @@ async function loadVoiceBank(): Promise<VoiceBank> {
   }
 }
 
-async function pickFromBank(gender: string, accent: string, delivery: string): Promise<string | null> {
+async function pickFromBank(gender: string, accent: string, delivery: string): Promise<VoiceEntry | null> {
   const bank = await loadVoiceBank()
 
   // 1. Exact match: gender + accent + delivery
@@ -103,7 +103,7 @@ async function pickFromBank(gender: string, accent: string, delivery: string): P
 
   const entry = pool[Math.floor(Math.random() * pool.length)]
   console.log(`[tts] picked: ${entry.name} (${entry.id}) [${gender}/${accent}/${delivery}]`)
-  return entry.id
+  return entry
 }
 
 // ─── HANDLER ─────────────────────────────────────────────────────────
@@ -125,11 +125,20 @@ export async function POST(req: NextRequest) {
 
     // Audition mode: caller passed a specific voice ID to test
     // Normal mode: pick exclusively from the Google Sheets voice bank
-    const voiceId = voiceIdOverride ?? await pickFromBank(gender, accent, delivery)
-    if (!voiceId) {
-      return NextResponse.json({ error: 'No voices available — check your voice bank spreadsheet' }, { status: 503 })
+    let voiceId: string
+    let voiceName: string
+    if (voiceIdOverride) {
+      voiceId = voiceIdOverride
+      voiceName = 'override'
+    } else {
+      const picked = await pickFromBank(gender, accent, delivery)
+      if (!picked) {
+        return NextResponse.json({ error: 'No voices available — check your voice bank spreadsheet' }, { status: 503 })
+      }
+      voiceId = picked.id
+      voiceName = picked.name
     }
-    console.log(`[tts] using voiceId=${voiceId}${voiceIdOverride ? ' (override)' : ''}`)
+    console.log(`[tts] using voice: ${voiceName} (${voiceId}) [${gender}/${accent}/${delivery}]`)
 
     // whisper: very low stability → airy, breathy, intimate
     // calm:    moderate stability → gentle, clear, soothing speaking voice (default)
@@ -168,6 +177,7 @@ export async function POST(req: NextRequest) {
       headers: {
         'Content-Type': 'audio/mpeg',
         'X-Voice-Id': voiceId,
+        'X-Voice-Name': voiceName,
         'X-Voice-Gender': gender,
         'X-Voice-Accent': accent,
         'X-Voice-Delivery': delivery,
