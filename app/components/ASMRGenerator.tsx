@@ -301,6 +301,18 @@ const SCENE_ELEMENTS: SceneElement[] = [
     negType: '',
   },
   {
+    patterns: [/\bmeditat\w+\s+tune\w*/i, /\bmeditat\w+\s+music\b/i, /\bambient\s+meditat\w*/i, /\bmeditat\w+\s+ambient\b/i],
+    label: 'Meditation ambient',
+    promptFn: () => 'soft sustained tibetan singing bowls and low resonant drone, gentle meditative ambient texture, peaceful ASMR',
+    negType: '',
+  },
+  {
+    patterns: [/\bmeditat\w+/i],
+    label: 'Meditation ambience',
+    promptFn: () => 'peaceful meditation ambience with soft distant singing bowls, quiet gentle drone, calming meditative ASMR',
+    negType: '',
+  },
+  {
     patterns: [/\bpaint\w*/i, /\bwatercolor\w*/i, /\bcanvas\b/i, /\beasel\b/i],
     label: 'Brush strokes',
     promptFn: () => 'continuous overlapping soft paintbrush strokes on canvas, steady flowing painting sounds, natural calming ASMR',
