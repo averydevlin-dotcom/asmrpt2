@@ -640,7 +640,7 @@ export default function ASMRGenerator() {
       })
 
       if (res.ok) {
-        const { voice, sounds, ambientDesc, mode: pipelineMode } = await res.json()
+        const { voice, sounds, ambientDesc, mode: pipelineMode, voiceOnly: pipelineVoiceOnly } = await res.json()
         mode = pipelineMode === 'sequence' ? 'sequence' : 'layer'
 
         let soundComps: SoundComponent[] = (sounds as { label: string; prompt: string; frequency?: string; background?: boolean }[]).map(s => ({
@@ -654,11 +654,9 @@ export default function ASMRGenerator() {
           background: s.background === true,
         }))
 
-        // Fall back to local extraction only when needed:
-        // - Skip if voice-only (voice exists AND no scene was described)
-        // - Run if there's a scene but Haiku returned nothing, or if there's no voice at all
-        const isVoiceOnlyRequest = voice?.script && !ambientDesc
-        if (soundComps.length === 0 && !isVoiceOnlyRequest) {
+        // Fall back to local extraction only when needed.
+        // Trust the pipeline's voiceOnly flag — if it says voice-only, skip sound fallback.
+        if (soundComps.length === 0 && !pipelineVoiceOnly) {
           soundComps = extractSceneComponents(ambientDesc || raw)
         }
 
