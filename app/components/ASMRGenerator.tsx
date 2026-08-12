@@ -675,8 +675,8 @@ export default function ASMRGenerator() {
               script: voice.script,
             },
           }
-          // Background sounds should be quiet underneath the voice
-          const quietSoundComps = soundComps.map(s => ({ ...s, volume: 30 }))
+          // Background sounds sit underneath the voice
+          const quietSoundComps = soundComps.map(s => ({ ...s, volume: 50 }))
           components = [voiceComp, ...quietSoundComps].slice(0, 4)
         } else {
           components = soundComps
