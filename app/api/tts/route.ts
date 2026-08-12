@@ -142,10 +142,11 @@ export async function POST(req: NextRequest) {
 
     // whisper: very low stability → airy, breathy, intimate
     // calm:    moderate stability → gentle, clear, soothing speaking voice (default)
+    // Always use eleven_multilingual_v2 — community voices don't reliably support turbo models
     const isWhisper = delivery === 'whisper'
     const stability = isWhisper ? 0.07 : 0.45
     const speed     = isWhisper ? 0.78 : 0.88
-    const model     = isWhisper ? 'eleven_turbo_v2_5' : 'eleven_multilingual_v2'
+    const model     = 'eleven_multilingual_v2'
 
     // Strip leading performance cues like "(whispering)" or "(softly)" —
     // ElevenLabs reads them literally rather than treating them as directions.
