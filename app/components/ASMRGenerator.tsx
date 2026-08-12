@@ -834,6 +834,14 @@ export default function ASMRGenerator() {
     if (n && ctxRef.current) n.userGain.gain.setTargetAtTime(vol / 100, ctxRef.current.currentTime, 0.04)
   }
 
+  function handleVoiceRate(rate: number) {
+    // Adjust playback speed in real-time via Web Audio playbackRate
+    const voiceComp = state.components.find(c => c.voiceConfig && !c.voiceDone)
+    if (!voiceComp) return
+    const nodes = compNodesRef.current.get(voiceComp.id)
+    if (nodes) nodes.source.playbackRate.value = rate
+  }
+
   function handleFilter(key: keyof FilterSettings, val: number) {
     setState(prev => ({ ...prev, filters: { ...prev.filters, [key]: val } }))
     const f = filterRef.current; const audioCtx = ctxRef.current
@@ -897,7 +905,7 @@ export default function ASMRGenerator() {
           <ActiveView
             components={state.components} filters={state.filters} duration={state.duration}
             mode={state.mode} currentSequenceId={state.currentSequenceId}
-            onVolume={handleVolume} onFilter={handleFilter} onExpire={handleExpire} onReset={handleReset}
+            onVolume={handleVolume} onVoiceRate={handleVoiceRate} onFilter={handleFilter} onExpire={handleExpire} onReset={handleReset}
           />
         )}
       </div>
@@ -1078,14 +1086,16 @@ function ConfirmView({
 const COMP_COLORS = ['#9C7A5E','#7EC8E3','#C4A0D4','#D4C87A','#F0A0B8','#A0D4B8']
 
 function ActiveView({
-  components, filters, duration, mode, currentSequenceId, onVolume, onFilter, onExpire, onReset,
+  components, filters, duration, mode, currentSequenceId, onVolume, onVoiceRate, onFilter, onExpire, onReset,
 }: {
   components: SoundComponent[]; filters: FilterSettings; duration: number | null
   mode: 'layer' | 'sequence'; currentSequenceId: string | null
-  onVolume: (id: string, v: number) => void; onFilter: (k: keyof FilterSettings, v: number) => void
+  onVolume: (id: string, v: number) => void; onVoiceRate: (rate: number) => void
+  onFilter: (k: keyof FilterSettings, v: number) => void
   onExpire: () => void; onReset: () => void
 }) {
   const [showFilters, setShowFilters] = useState(false)
+  const [voiceRate, setVoiceRate] = useState(1.0)
   const [timeLeft, setTimeLeft] = useState<number | null>(duration)
   const [expired, setExpired] = useState(false)
   const allDone = components.every(c => c.status === 'ready' || c.status === 'failed')
@@ -1189,16 +1199,35 @@ function ActiveView({
                 </span>
               </div>
               {comp.status === 'ready' && (
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 relative h-5 flex items-center">
-                    <div className="absolute inset-x-0 h-[3px] rounded-full bg-white/[0.08]" />
-                    <div className="absolute left-0 h-[3px] rounded-full transition-all duration-75"
-                      style={{ width: `${comp.volume}%`, background: color, opacity: isOtherSeqStep ? 0.2 : 0.65 }} />
-                    <input type="range" min={0} max={100} value={comp.volume}
-                      onChange={e => onVolume(comp.id, Number(e.target.value))}
-                      className="absolute inset-0 w-full opacity-0 cursor-pointer" />
+                <div className="flex flex-col gap-1.5">
+                  {/* Volume */}
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 relative h-5 flex items-center">
+                      <div className="absolute inset-x-0 h-[3px] rounded-full bg-white/[0.08]" />
+                      <div className="absolute left-0 h-[3px] rounded-full transition-all duration-75"
+                        style={{ width: `${comp.volume}%`, background: color, opacity: isOtherSeqStep ? 0.2 : 0.65 }} />
+                      <input type="range" min={0} max={100} value={comp.volume}
+                        onChange={e => onVolume(comp.id, Number(e.target.value))}
+                        className="absolute inset-0 w-full opacity-0 cursor-pointer" />
+                    </div>
+                    <span className="text-[10px] text-white/40 w-6 text-right tabular-nums">{comp.volume}</span>
                   </div>
-                  <span className="text-[10px] text-white/40 w-6 text-right tabular-nums">{comp.volume}</span>
+                  {/* Voice speed — only shown for active (not yet finished) voice */}
+                  {comp.voiceConfig && !comp.voiceDone && (
+                    <div className="flex items-center gap-3">
+                      <span className="text-[9px] text-white/25 w-10 text-right shrink-0">slower</span>
+                      <div className="flex-1 relative h-5 flex items-center">
+                        <div className="absolute inset-x-0 h-[3px] rounded-full bg-white/[0.08]" />
+                        <div className="absolute h-[3px] rounded-full bg-white/30"
+                          style={{ left: '50%', width: `${(voiceRate - 1) * 100}%`, transform: voiceRate < 1 ? `translateX(${(voiceRate - 1) * 100}%)` : 'none' }} />
+                        <input type="range" min={0.6} max={1.4} step={0.05} value={voiceRate}
+                          onChange={e => { const r = Number(e.target.value); setVoiceRate(r); onVoiceRate(r) }}
+                          className="absolute inset-0 w-full opacity-0 cursor-pointer" />
+                      </div>
+                      <span className="text-[9px] text-white/25 w-10 shrink-0">faster</span>
+                      <span className="text-[10px] text-white/40 w-8 text-right tabular-nums shrink-0">{voiceRate.toFixed(2)}×</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
